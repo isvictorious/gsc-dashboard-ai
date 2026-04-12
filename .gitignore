@@ -1,0 +1,27 @@
+# Google Cloud credentials
+*.json
+service-account*.json
+credentials*.json
+gcloud/
+
+# Environment files
+.env
+.env.*
+config/project.env
+*.env
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+logs/
+
+# Temp files from BigQuery exports
+*.csv
+*.tsv
