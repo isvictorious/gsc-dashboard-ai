@@ -1,13 +1,30 @@
 -- ============================================================================
 -- Keyword Cannibalization Report
 -- ============================================================================
--- Purpose: Find queries where multiple URLs from the site compete for the same keyword
--- Cannibalization dilutes ranking signals and confuses Google about which page to rank
+-- Purpose: Find non-brand queries where multiple DeepDyve URLs compete
+-- Cannibalization dilutes ranking signals — Google doesn't know which page
+-- to rank, so it splits impressions across multiple pages instead of
+-- concentrating authority on one strong page
 --
 -- Solution: Consolidate content, add canonical tags, or differentiate targeting
+--
+-- Filters applied:
+--   - Exclude brand queries (deepdyve, deep dyve) — brand searches naturally
+--     hit multiple pages (homepage, login, pricing) and that's expected behavior,
+--     not a cannibalization problem worth fixing
+--   - Exclude individual paper pages (/lp/, /doc-view) — same noise filter
+--   - Minimum 200 impressions — focus on queries with real volume
+--   - Query length > 5 chars, no dots — same noise filters as other reports
+--
+-- Severity score: competing_urls × (total_impressions / 100)
+-- More competing pages × more impression volume = bigger problem
+--
+-- Priority labels:
+--   High (severity >= 20): Consolidate or canonicalize this week
+--   Med  (severity 5-19): Plan consolidation this quarter
+--   Low  (severity < 5): Monitor
 -- ============================================================================
 
--- Find queries ranking with multiple URLs
 WITH multi_url_queries AS (
     SELECT
         query,
@@ -18,67 +35,66 @@ WITH multi_url_queries AS (
         `deepdyve-491623.searchconsole.searchdata_url_impression`
     WHERE
         query IS NOT NULL
-    GROUP BY
-        query
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        -- Exclude paper pages
+        AND url NOT LIKE '%/lp/%'
+        AND url NOT LIKE '%/doc-view%'
+        -- Noise filters
+        AND LENGTH(query) > 5
+        AND query NOT LIKE '%.%'
+        -- Exclude brand queries — brand searches hitting multiple pages is expected
+        AND LOWER(query) NOT LIKE '%deepdyve%'
+        AND LOWER(query) NOT LIKE '%deep dyve%'
+    GROUP BY query
     HAVING
-        -- Cannibalization = same query, multiple URLs
         COUNT(DISTINCT url) > 1
-        -- Focus on queries with meaningful traffic
-        AND SUM(impressions) >= 100
+        AND SUM(impressions) >= 200
 ),
 
--- Expand to show each competing URL with its metrics
-cannibalization_details AS (
+details AS (
     SELECT
-        sui.data_date,
-        sui.query,
-        mui.url_count AS competing_urls,
+        m.query,
+        m.url_count AS competing_urls,
+        m.total_impressions,
         sui.url,
+        REGEXP_EXTRACT(sui.url, r'https?://[^/]+(.+)') AS url_path,
         SUM(sui.impressions) AS impressions,
         SUM(sui.clicks) AS clicks,
         (SUM(sui.sum_position) / NULLIF(SUM(sui.impressions), 0)) + 1 AS avg_position,
         SAFE_DIVIDE(SUM(sui.clicks), SUM(sui.impressions)) AS ctr,
-        -- Calculate this URL's share of total query impressions
-        SAFE_DIVIDE(
-            SUM(sui.impressions),
-            mui.total_impressions
-        ) AS impression_share
+        -- Severity: more competing pages × more total impressions = bigger problem
+        ROUND(m.url_count * (m.total_impressions / 100), 1) AS severity_score
     FROM
         `deepdyve-491623.searchconsole.searchdata_url_impression` sui
-    JOIN
-        multi_url_queries mui
-        ON sui.query = mui.query
+    JOIN multi_url_queries m ON sui.query = m.query
     WHERE
         sui.query IS NOT NULL
+        AND sui.data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        AND sui.url NOT LIKE '%/lp/%'
+        AND sui.url NOT LIKE '%/doc-view%'
     GROUP BY
-        sui.data_date, sui.query, mui.url_count, sui.url, mui.total_impressions
+        m.query, m.url_count, m.total_impressions, sui.url
 )
 
--- Final output: cannibalization instances with page context
 SELECT
-    cd.data_date,
-    cd.query,
-    cd.competing_urls,
-    cd.url,
-    cd.impressions,
-    cd.clicks,
-    ROUND(cd.avg_position, 1) AS avg_position,
-    ROUND(cd.ctr * 100, 2) AS ctr_percent,
-    ROUND(cd.impression_share * 100, 1) AS impression_share_percent,
-    -- Page metadata for side-by-side comparison (Phase 2)
-    pm.title AS page_title,
-    pm.h1,
-    pm.word_count,
-    -- Severity score: more URLs + more impressions = bigger problem
-    ROUND(
-        cd.competing_urls * (cd.impressions / 100),
-        2
-    ) AS cannibalization_severity
-FROM
-    cannibalization_details cd
-LEFT JOIN
-    `deepdyve-491623.searchconsole.page_metadata` pm
-    ON cd.url = pm.url
+    CASE
+        WHEN severity_score >= 20 THEN 'High'
+        WHEN severity_score >= 5  THEN 'Med'
+        ELSE 'Low'
+    END AS priority,
+    query,
+    competing_urls,
+    url_path,
+    url,
+    impressions,
+    clicks,
+    ROUND(avg_position, 1) AS avg_position,
+    ROUND(ctr * 100, 2) AS ctr_percent,
+    ROUND(SAFE_DIVIDE(impressions, total_impressions) * 100, 1) AS impression_share_pct,
+    severity_score
+FROM details
 ORDER BY
-    cd.query,
-    cd.impressions DESC
+    severity_score DESC,
+    query,
+    impressions DESC
+LIMIT 100

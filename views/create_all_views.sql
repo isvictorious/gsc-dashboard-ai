@@ -181,62 +181,46 @@ ORDER BY
 
 -- ============================================================================
 -- View 4: Cannibalization
--- Multiple URLs competing for the same keyword
+-- Non-brand queries where multiple DeepDyve pages compete for the same keyword
+-- Excludes brand queries (deepdyve, deep dyve) — those naturally hit multiple pages
+-- Priority: High (severity>=20), Med (5-19), Low (<5)
 -- ============================================================================
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_cannibalization` AS
 WITH multi_url_queries AS (
-    SELECT
-        query,
-        COUNT(DISTINCT url) AS url_count,
-        SUM(impressions) AS total_impressions,
-        SUM(clicks) AS total_clicks
-    FROM
-        `deepdyve-491623.searchconsole.searchdata_url_impression`
-    WHERE
-        query IS NOT NULL
-    GROUP BY
-        query
-    HAVING
-        COUNT(DISTINCT url) > 1
-        AND SUM(impressions) >= 100
+    SELECT query, COUNT(DISTINCT url) AS url_count,
+        SUM(impressions) AS total_impressions, SUM(clicks) AS total_clicks
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+    WHERE query IS NOT NULL
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        AND url NOT LIKE '%/lp/%' AND url NOT LIKE '%/doc-view%'
+        AND LENGTH(query) > 5 AND query NOT LIKE '%.%'
+        AND LOWER(query) NOT LIKE '%deepdyve%'
+        AND LOWER(query) NOT LIKE '%deep dyve%'
+    GROUP BY query
+    HAVING COUNT(DISTINCT url) > 1 AND SUM(impressions) >= 200
 ),
-cannibalization_details AS (
-    SELECT
-        sui.data_date,
-        sui.query,
-        mui.url_count AS competing_urls,
-        sui.url,
-        SUM(sui.impressions) AS impressions,
-        SUM(sui.clicks) AS clicks,
+details AS (
+    SELECT m.query, m.url_count AS competing_urls, m.total_impressions,
+        sui.url, REGEXP_EXTRACT(sui.url, r'https?://[^/]+(.+)') AS url_path,
+        SUM(sui.impressions) AS impressions, SUM(sui.clicks) AS clicks,
         (SUM(sui.sum_position) / NULLIF(SUM(sui.impressions), 0)) + 1 AS avg_position,
         SAFE_DIVIDE(SUM(sui.clicks), SUM(sui.impressions)) AS ctr,
-        SAFE_DIVIDE(SUM(sui.impressions), mui.total_impressions) AS impression_share
-    FROM
-        `deepdyve-491623.searchconsole.searchdata_url_impression` sui
-    JOIN
-        multi_url_queries mui
-        ON sui.query = mui.query
-    WHERE
-        sui.query IS NOT NULL
-    GROUP BY
-        sui.data_date, sui.query, mui.url_count, sui.url, mui.total_impressions
+        ROUND(m.url_count * (m.total_impressions / 100), 1) AS severity_score
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression` sui
+    JOIN multi_url_queries m ON sui.query = m.query
+    WHERE sui.query IS NOT NULL
+        AND sui.data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        AND sui.url NOT LIKE '%/lp/%' AND sui.url NOT LIKE '%/doc-view%'
+    GROUP BY m.query, m.url_count, m.total_impressions, sui.url
 )
 SELECT
-    data_date,
-    query,
-    competing_urls,
-    url,
-    impressions,
-    clicks,
-    ROUND(avg_position, 1) AS avg_position,
-    ROUND(ctr * 100, 2) AS ctr_percent,
-    ROUND(impression_share * 100, 1) AS impression_share_percent,
-    ROUND(competing_urls * (impressions / 100), 2) AS cannibalization_severity
-FROM
-    cannibalization_details
-ORDER BY
-    query,
-    impressions DESC;
+    CASE WHEN severity_score >= 20 THEN 'High' WHEN severity_score >= 5 THEN 'Med' ELSE 'Low' END AS priority,
+    query, competing_urls, url_path, url, impressions, clicks,
+    ROUND(avg_position, 1) AS avg_position, ROUND(ctr * 100, 2) AS ctr_percent,
+    ROUND(SAFE_DIVIDE(impressions, total_impressions) * 100, 1) AS impression_share_pct,
+    severity_score
+FROM details
+ORDER BY severity_score DESC, query, impressions DESC;
 
 -- ============================================================================
 -- View 5: Brand vs Non-Brand

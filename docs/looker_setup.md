@@ -94,7 +94,27 @@ The tab bar at the top of the mockup shows: 1-Quick Wins | 2-Content Gaps | 3-CT
 > **Priority = missed clicks** — the estimated extra clicks you'd receive if your CTR matched the site average for that position bucket.
 
 ## Page 4: Cannibalization (`v_cannibalization`)
-*Instructions to be added when query is finalized*
+
+### Table setup:
+- Dimensions: `priority`, `query`, `competing_urls`, `url_path`
+- Metrics: `impressions`, `clicks`, `avg_position`, `ctr_percent`, `impression_share_pct`, `severity_score`
+- Sort: `severity_score` desc, then `query`, then `impressions` desc
+
+### Conditional formatting on `priority`:
+- `High` → green background
+- `Med` → yellow background
+- `Low` → grey background
+
+### Summary scorecards:
+- COUNT(DISTINCT query) → "Cannibalized Keywords"
+- SUM(`impressions`) → "Total Affected Impressions"
+
+### Text block (how to action this):
+> **What is cannibalization?** Multiple pages on your site are competing for the same keyword. Google splits ranking signals across all of them instead of concentrating authority on one strong page — so none of them rank as well as they could.
+>
+> **How to action:** For each High priority query, pick the strongest page (most clicks, best position) as the canonical winner. Then either: (a) add a canonical tag on the weaker pages pointing to the winner, (b) consolidate content into one page, or (c) differentiate the pages so they target slightly different intents.
+>
+> **Note on the data:** Queries like "deep dive" and "deepdive" appear here because they're common misspellings of DeepDyve. These are borderline brand queries — treat them as brand consolidation issues rather than content cannibalization.
 
 ## Page 5: Brand vs Non-Brand (`v_brand_vs_nonbrand`)
 *Instructions to be added when query is finalized*
