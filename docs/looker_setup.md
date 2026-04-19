@@ -47,7 +47,28 @@ The tab bar at the top of the mockup shows: 1-Quick Wins | 2-Content Gaps | 3-CT
 ---
 
 ## Page 2: Content Gaps (`v_content_gaps`)
-*Instructions to be added when query is finalized*
+
+### Table setup:
+- Dimensions: `priority`, `query`, `url_path`
+- Metrics: `impressions`, `clicks`, `avg_position`, `ctr_percent`, `gap_score`
+- Sort: priority asc, then `gap_score` desc
+
+### Conditional formatting on `priority`:
+- `High` → green background
+- `Med` → yellow background
+- `Low` → grey background
+
+### Summary scorecards:
+- Total rows → "Content Gaps Found"
+- SUM(`impressions`) → "Total Gap Impressions"
+- AVG(`avg_position`) → "Avg Position"
+
+### Text block (how to action this + data note):
+> **What is a content gap?** These are keywords where Google is already ranking your page — but the page doesn't explicitly target that keyword. A dedicated page or optimized content would rank significantly higher.
+>
+> **How to action:** High priority gaps = create a new landing page or blog post targeting this keyword. Med = add the keyword to an existing page's title, H1, or body copy.
+>
+> **Note on the data:** DeepDyve indexes millions of academic papers, so some irrelevant queries can appear. This report filters those out by excluding individual paper pages (/lp/ and /doc-view paths) and short queries — but if you see something that looks off, it's likely an academic paper title coincidentally matching an unrelated search.
 
 ## Page 3: CTR Optimization (`v_ctr_optimization`)
 *Instructions to be added when query is finalized*
