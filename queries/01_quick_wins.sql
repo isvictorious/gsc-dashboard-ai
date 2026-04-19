@@ -6,26 +6,35 @@
 --
 -- Key insight: Position is zero-based in raw GSC data, so we add 1 for display
 -- Formula: actual_position = (sum_position / impressions) + 1
+--
+-- Looker date filtering: Connect Looker's date range control to data_date
+-- Default fallback: last 30 days (set in the view)
 -- ============================================================================
 
--- Base metrics: aggregate keyword performance over the date range
+-- Aggregate keyword performance across the full date range
+-- data_date is kept for Looker's date range filter to work
 WITH keyword_metrics AS (
     SELECT
-        data_date,
         query,
         url,
+        -- Aggregate across all dates so each keyword appears once
         SUM(impressions) AS impressions,
         SUM(clicks) AS clicks,
         -- Position is zero-based in raw data, add 1 for actual position
         (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position,
-        SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr
+        SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+        MIN(data_date) AS first_seen,
+        MAX(data_date) AS last_seen
     FROM
         `deepdyve-491623.searchconsole.searchdata_url_impression`
     WHERE
         -- Filter out anonymized queries (appear as NULL)
         query IS NOT NULL
+        -- Default date range: last 30 days
+        -- Looker will override this with its own date filter on the view
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
     GROUP BY
-        data_date, query, url
+        query, url
     HAVING
         -- Quick wins: positions 5-15 with meaningful impressions
         avg_position BETWEEN 5 AND 15
@@ -57,13 +66,14 @@ enriched_results AS (
 
 -- Final output: prioritized quick wins
 SELECT
-    data_date,
     query,
     url,
     impressions,
     clicks,
     ROUND(avg_position, 1) AS avg_position,
     ROUND(ctr * 100, 2) AS ctr_percent,
+    first_seen,
+    last_seen,
     page_title,
     meta_description,
     priority_score

@@ -15,31 +15,34 @@
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_quick_wins` AS
 WITH keyword_metrics AS (
     SELECT
-        data_date,
         query,
         url,
         SUM(impressions) AS impressions,
         SUM(clicks) AS clicks,
         (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position,
-        SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr
+        SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+        MIN(data_date) AS first_seen,
+        MAX(data_date) AS last_seen
     FROM
         `deepdyve-491623.searchconsole.searchdata_url_impression`
     WHERE
         query IS NOT NULL
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
     GROUP BY
-        data_date, query, url
+        query, url
     HAVING
         avg_position BETWEEN 5 AND 15
         AND impressions >= 100
 )
 SELECT
-    data_date,
     query,
     url,
     impressions,
     clicks,
     ROUND(avg_position, 1) AS avg_position,
     ROUND(ctr * 100, 2) AS ctr_percent,
+    first_seen,
+    last_seen,
     ROUND((impressions / 100) * (15 - avg_position) / 10, 2) AS priority_score
 FROM
     keyword_metrics
