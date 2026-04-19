@@ -15,6 +15,21 @@ The tab bar at the top of the mockup shows: 1-Quick Wins | 2-Content Gaps | 3-CT
 
 ---
 
+## What Good Looks Like — Trends Per Report
+
+Use this as a reference when reviewing with clients. Each report has a direction that indicates healthy SEO.
+
+| Report | Healthy trend | Warning sign |
+|--------|--------------|--------------|
+| Quick Wins | List shrinks over time — opportunities are being acted on | Same High items appearing month after month = nothing is being fixed |
+| Content Gaps | List shrinks as dedicated pages are created | New gaps appearing faster than old ones are closed |
+| CTR Optimization | Missed clicks decrease — titles/descriptions improving | Same pages underperforming CTR quarter after quarter |
+| Cannibalization | Severity scores decrease — pages consolidated | Score growing = site structure getting worse over time |
+| Brand vs Non-Brand | Non-brand share growing month over month | Brand share rising while non-brand is flat or falling = SEO not reaching new audiences |
+| Page Performance | Top pages list growing, zombie pages list shrinking | Zombie list growing = content being added without SEO intent |
+
+---
+
 ## Initial Setup (do once)
 1. Go to lookerstudio.google.com → Create → Report
 2. Add data → BigQuery → My Projects → `deepdyve-491623` → `searchconsole` → `v_quick_wins`
@@ -31,7 +46,7 @@ The tab bar at the top of the mockup shows: 1-Quick Wins | 2-Content Gaps | 3-CT
 
 ### Conditional formatting on `priority`:
 - `High` → green background
-- `Med` → yellow background  
+- `Med` → yellow background
 - `Low` → grey background
 
 ### Summary scorecards (top of page, match mockup):
@@ -43,6 +58,10 @@ The tab bar at the top of the mockup shows: 1-Quick Wins | 2-Content Gaps | 3-CT
 > **Priority = impressions × position opportunity.**
 > High = fix this week — big audience, almost ranking. Small improvements to title, internal linking, or content depth can push these into top 3 where 60%+ of clicks happen.
 > Med = optimize this quarter. Low = monitor.
+
+### What good looks like:
+> **Healthy:** High priority items from last month are dropping off the list because positions improved. The total "Opportunities Found" count is stable or shrinking.
+> **Warning:** The same keywords appear at the top of this list every month — it means opportunities are being identified but not acted on.
 
 ---
 
@@ -70,6 +89,12 @@ The tab bar at the top of the mockup shows: 1-Quick Wins | 2-Content Gaps | 3-CT
 >
 > **Note on the data:** DeepDyve indexes millions of academic papers, so some irrelevant queries can appear. This report filters those out by excluding individual paper pages (/lp/ and /doc-view paths) and short queries — but if you see something that looks off, it's likely an academic paper title coincidentally matching an unrelated search.
 
+### What good looks like:
+> **Healthy:** Gaps are being closed — keywords that appeared here last quarter now have dedicated pages ranking in positions 1-5.
+> **Warning:** The same High priority gaps appear month after month with no new pages created. Or the total gap count keeps growing, meaning content is expanding without SEO targeting.
+
+---
+
 ## Page 3: CTR Optimization (`v_ctr_optimization`)
 
 ### Table setup:
@@ -93,6 +118,12 @@ The tab bar at the top of the mockup shows: 1-Quick Wins | 2-Content Gaps | 3-CT
 >
 > **Priority = missed clicks** — the estimated extra clicks you'd receive if your CTR matched the site average for that position bucket.
 
+### What good looks like:
+> **Healthy:** Total missed clicks decreasing month over month — titles and descriptions are improving and people are clicking more.
+> **Warning:** The same pages showing High missed clicks every month, or total missed clicks growing = the site is ranking better but not converting that into clicks. Title/description work is being skipped.
+
+---
+
 ## Page 4: Cannibalization (`v_cannibalization`)
 
 ### Table setup:
@@ -115,6 +146,12 @@ The tab bar at the top of the mockup shows: 1-Quick Wins | 2-Content Gaps | 3-CT
 > **How to action:** For each High priority query, pick the strongest page (most clicks, best position) as the canonical winner. Then either: (a) add a canonical tag on the weaker pages pointing to the winner, (b) consolidate content into one page, or (c) differentiate the pages so they target slightly different intents.
 >
 > **Note on the data:** Queries like "deep dive" and "deepdive" appear here because they're common misspellings of DeepDyve. These are borderline brand queries — treat them as brand consolidation issues rather than content cannibalization.
+
+### What good looks like:
+> **Healthy:** Severity scores decreasing — pages are being consolidated and canonical tags are being applied. Fewer queries showing more than 2 competing URLs.
+> **Warning:** Severity scores growing, or the same High items persisting — site structure is getting messier over time. Each new page added without a clear canonical strategy makes this worse.
+
+---
 
 ## Page 5: Brand vs Non-Brand (`v_brand_vs_nonbrand`)
 
@@ -141,6 +178,14 @@ The tab bar at the top of the mockup shows: 1-Quick Wins | 2-Content Gaps | 3-CT
 > **Brand terms tracked:** deepdyve, deep dyve, deepdive (common misspelling). To add or change brand terms, update the view in BigQuery.
 >
 > **Note:** This report uses a 90-day window by default (vs 30 days for other reports) to make the trend line more meaningful.
+
+### What good looks like:
+> **Healthy:** Both brand AND non-brand clicks growing month over month — the brand is getting stronger while SEO is simultaneously reaching new audiences. Non-brand share % is stable or increasing.
+> **Warning 1:** Brand clicks growing but non-brand flat or falling — the product/marketing is working but SEO isn't. New audience acquisition is stalled.
+> **Warning 2:** Non-brand clicks growing but brand clicks falling — SEO is working but brand health may be declining. Worth cross-referencing with direct traffic in GA4.
+> **Critical:** Both declining — overall search visibility is dropping. Check for manual penalties, algorithmic updates, or technical issues.
+
+---
 
 ## Page 6: Page Performance (`v_page_performance`)
 *Instructions to be added when query is finalized*
