@@ -71,7 +71,27 @@ The tab bar at the top of the mockup shows: 1-Quick Wins | 2-Content Gaps | 3-CT
 > **Note on the data:** DeepDyve indexes millions of academic papers, so some irrelevant queries can appear. This report filters those out by excluding individual paper pages (/lp/ and /doc-view paths) and short queries — but if you see something that looks off, it's likely an academic paper title coincidentally matching an unrelated search.
 
 ## Page 3: CTR Optimization (`v_ctr_optimization`)
-*Instructions to be added when query is finalized*
+
+### Table setup:
+- Dimensions: `priority`, `url_path`, `position_bucket`
+- Metrics: `impressions`, `clicks`, `avg_position`, `actual_ctr_percent`, `expected_ctr_percent`, `ctr_gap_percent`, `missed_clicks`
+- Sort: priority asc, then `missed_clicks` desc
+
+### Conditional formatting on `priority`:
+- `High` → green background
+- `Med` → yellow background
+- `Low` → grey background
+
+### Summary scorecards:
+- SUM(`missed_clicks`) → "Total Missed Clicks"
+- Count rows → "Pages to Fix"
+
+### Text block (how to action this):
+> **What is CTR optimization?** Your page is already ranking — but fewer people are clicking than expected for that position. This means your title tag or meta description isn't compelling enough.
+>
+> **How to action:** For each High priority page, rewrite the title and meta description to be more specific and benefit-focused. A 1% CTR improvement at position 2 with 3,000 impressions = 30 extra free clicks per month.
+>
+> **Priority = missed clicks** — the estimated extra clicks you'd receive if your CTR matched the site average for that position bucket.
 
 ## Page 4: Cannibalization (`v_cannibalization`)
 *Instructions to be added when query is finalized*
