@@ -188,7 +188,35 @@ Use this as a reference when reviewing with clients. Each report has a direction
 ---
 
 ## Page 6: Page Performance (`v_page_performance`)
-*Instructions to be added when query is finalized*
+
+### Table setup (filter by page_category to make two separate tables):
+**Table 1 — Top Performers:**
+- Filter: `page_category = Top Performer`
+- Dimensions: `url_path`
+- Metrics: `clicks`, `impressions`, `avg_position`, `ctr_percent`, `ranking_keywords`
+- Sort: `clicks` desc
+
+**Table 2 — Zombie Pages:**
+- Filter: `page_category = Zombie Page`
+- Dimensions: `url_path`
+- Metrics: `impressions`, `avg_position`, `ranking_keywords`
+- Sort: `impressions` desc
+
+### Summary scorecards:
+- Count of Top Performer rows → "Traffic-Driving Pages"
+- Count of Zombie Page rows → "Zombie Pages"
+- SUM clicks (Top Performers only) → "Total Clicks"
+
+### Text block:
+> **Top Performers** are your traffic engine — monitor these closely. A sudden drop in clicks on a top page is an early warning sign of a ranking loss.
+>
+> **Zombie Pages** rank and appear in search results but nobody clicks. This wastes Google's crawl budget and dilutes your site's overall quality signals. Each zombie is dragging down your top performers.
+>
+> **How to action zombies:** (1) Improve — rewrite the title/description to match what searchers actually want. (2) Consolidate — merge the content into a stronger page. (3) Noindex — if the page has no SEO value, remove it from Google's index entirely.
+
+### What good looks like:
+> **Healthy:** Top performers list stable or growing with increasing clicks. Zombie list shrinking as pages are improved or consolidated.
+> **Warning:** Zombie list growing month over month — content is being added without SEO intent. Or top performers losing clicks — check for ranking drops in Quick Wins report.
 
 ## Page 7: Crawl Health (`v_crawl_health`)
 *Stub — awaiting Cloudflare integration (Phase 2)*

@@ -129,6 +129,32 @@ Use this as a learning reference — these are real decisions made against real 
 
 ---
 
+## Query 06: Page Performance
+
+### Change: Remove data_date from GROUP BY, aggregate per page
+**Original:** Grouped by `data_date, url` — one row per page per day, resulted in the same page appearing 30 times
+**Changed to:** Group by `url` only with 30-day aggregate
+**Why:** Same reason as Quick Wins — for an actionable report you want one row per page showing total 30-day performance, not daily snapshots.
+**SQL concept:** Same aggregation granularity principle — fewer GROUP BY columns = more aggregated result.
+
+---
+
+### Change: Raise zombie threshold from 100 to 200 impressions
+**Original:** `HAVING SUM(impressions) >= 100`
+**Changed to:** `WHERE impressions >= 200` in downstream CTE
+**Why:** At 100 impressions the zombie list included pages with very little data. 200 impressions over 30 days (~7/day) is the minimum for the data to be statistically meaningful enough to act on.
+**SQL concept:** Moving HAVING to WHERE after aggregation — same BigQuery pattern as other reports. HAVING can't be used when the aggregated columns are computed in a prior CTE.
+
+---
+
+### Change: Add performance_indicator column for Looker sorting
+**Original:** No sorting indicator
+**Changed to:** `CASE WHEN page_category = 'Top Performer' THEN clicks ELSE -impressions END AS performance_indicator`
+**Why:** UNION ALL combines two result sets with different sort priorities — top performers sort by clicks (highest first), zombies sort by impressions (highest first). A single signed column lets Looker sort both correctly using `ABS(performance_indicator) DESC`.
+**SQL concept:** Signed indicator for mixed-direction sorting across a UNION — a common pattern when combining result sets that need different sort logic.
+
+---
+
 ## General Patterns Used Across All Queries
 
 ### NULL-safe division
