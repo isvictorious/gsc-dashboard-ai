@@ -12,38 +12,54 @@
 -- View 1: Quick Wins
 -- Keywords in positions 5-15 with high impressions (easy ranking improvements)
 -- ============================================================================
+-- Priority labels: High (score>=25) = act now, Med (5-24) = this quarter, Low (<5) = monitor
+-- Score formula: (impressions/100) * (15 - avg_position) / 10
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_quick_wins` AS
 WITH keyword_metrics AS (
     SELECT
-        data_date,
         query,
         url,
+        REGEXP_EXTRACT(url, r'https?://[^/]+(.+)') AS url_path,
         SUM(impressions) AS impressions,
         SUM(clicks) AS clicks,
         (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position,
-        SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr
+        SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
+        MIN(data_date) AS first_seen,
+        MAX(data_date) AS last_seen
     FROM
         `deepdyve-491623.searchconsole.searchdata_url_impression`
     WHERE
         query IS NOT NULL
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
     GROUP BY
-        data_date, query, url
+        query, url
     HAVING
         avg_position BETWEEN 5 AND 15
         AND impressions >= 100
+),
+scored AS (
+    SELECT *, ROUND((impressions / 100) * (15 - avg_position) / 10, 2) AS priority_score
+    FROM keyword_metrics
 )
 SELECT
-    data_date,
+    CASE
+        WHEN priority_score >= 25 THEN 'High'
+        WHEN priority_score >= 5  THEN 'Med'
+        ELSE 'Low'
+    END AS priority,
     query,
+    url_path,
     url,
     impressions,
     clicks,
     ROUND(avg_position, 1) AS avg_position,
     ROUND(ctr * 100, 2) AS ctr_percent,
-    ROUND((impressions / 100) * (15 - avg_position) / 10, 2) AS priority_score
-FROM
-    keyword_metrics
+    first_seen,
+    last_seen,
+    priority_score
+FROM scored
 ORDER BY
+    CASE WHEN priority_score >= 25 THEN 1 WHEN priority_score >= 5 THEN 2 ELSE 3 END,
     priority_score DESC;
 
 -- ============================================================================
@@ -249,9 +265,8 @@ WITH classified_traffic AS (
         clicks,
         sum_position,
         CASE
-            WHEN LOWER(query) LIKE '%jack kornfield%'
-                OR LOWER(query) LIKE '%kornfield%'
-                OR LOWER(query) LIKE '%jackkornfield%'
+            WHEN LOWER(query) LIKE '%deepdyve%'
+                OR LOWER(query) LIKE '%deep dyve%'
             THEN 'Brand'
             ELSE 'Non-Brand'
         END AS traffic_type
