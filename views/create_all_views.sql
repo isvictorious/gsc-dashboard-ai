@@ -249,9 +249,8 @@ WITH classified_traffic AS (
         clicks,
         sum_position,
         CASE
-            WHEN LOWER(query) LIKE '%jack kornfield%'
-                OR LOWER(query) LIKE '%kornfield%'
-                OR LOWER(query) LIKE '%jackkornfield%'
+            WHEN LOWER(query) LIKE '%deepdyve%'
+                OR LOWER(query) LIKE '%deep dyve%'
             THEN 'Brand'
             ELSE 'Non-Brand'
         END AS traffic_type

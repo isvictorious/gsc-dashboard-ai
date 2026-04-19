@@ -2,7 +2,7 @@
 -- Brand vs Non-Brand Traffic Report
 -- ============================================================================
 -- Purpose: Analyze traffic split between brand and non-brand searches
--- Brand traffic = searches including your brand name (Jack Kornfield, etc.)
+-- Brand traffic = searches including your brand name (DeepDyve, etc.)
 -- Non-brand traffic = organic discovery searches
 --
 -- Why it matters: Healthy SEO has growing non-brand traffic
@@ -12,10 +12,8 @@
 -- Configure brand terms for this site
 -- Edit these terms to match your brand variations
 DECLARE brand_terms ARRAY<STRING> DEFAULT [
-    'jack kornfield',
-    'kornfield',
-    'jackkornfield',
-    'jack kornfield.com'
+    'deepdyve',
+    'deep dyve'
 ];
 
 -- Classify and aggregate traffic by brand/non-brand
