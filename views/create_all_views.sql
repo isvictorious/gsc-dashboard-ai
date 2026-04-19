@@ -126,79 +126,58 @@ ORDER BY
 
 -- ============================================================================
 -- View 3: CTR Optimization
--- Pages with below-average CTR for their position bucket
+-- Pages with below-average CTR for their position bucket (positions 1-20 only)
+-- Priority: High (>=50 missed clicks), Med (20-49), Low (<20)
+-- Excludes individual paper pages and positions > 20
 -- ============================================================================
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_ctr_optimization` AS
-WITH position_bucket_averages AS (
-    SELECT
-        CASE
-            WHEN (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 <= 3 THEN '1-3'
-            WHEN (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 <= 7 THEN '4-7'
-            WHEN (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 <= 10 THEN '8-10'
-            ELSE '11-20'
-        END AS position_bucket,
-        SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS avg_ctr_for_bucket
-    FROM
-        `deepdyve-491623.searchconsole.searchdata_url_impression`
-    WHERE
-        query IS NOT NULL
-    GROUP BY
-        1
+WITH base AS (
+    SELECT url, REGEXP_EXTRACT(url, r'https?://[^/]+(.+)') AS url_path,
+        SUM(impressions) AS total_impressions, SUM(clicks) AS total_clicks, SUM(sum_position) AS total_position
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+    WHERE query IS NOT NULL
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        AND url NOT LIKE '%/lp/%'
+        AND url NOT LIKE '%/doc-view%'
+    GROUP BY url
 ),
-page_ctr_metrics AS (
-    SELECT
-        data_date,
-        url,
-        query,
-        SUM(impressions) AS impressions,
-        SUM(clicks) AS clicks,
-        (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position,
-        SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS actual_ctr,
+page_bucketed AS (
+    SELECT url, url_path, total_impressions AS impressions, total_clicks AS clicks,
+        (total_position / NULLIF(total_impressions, 0)) + 1 AS avg_position,
+        SAFE_DIVIDE(total_clicks, total_impressions) AS actual_ctr,
         CASE
-            WHEN (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 <= 3 THEN '1-3'
-            WHEN (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 <= 7 THEN '4-7'
-            WHEN (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 <= 10 THEN '8-10'
+            WHEN (total_position / NULLIF(total_impressions, 0)) + 1 <= 3  THEN '1-3'
+            WHEN (total_position / NULLIF(total_impressions, 0)) + 1 <= 7  THEN '4-7'
+            WHEN (total_position / NULLIF(total_impressions, 0)) + 1 <= 10 THEN '8-10'
             ELSE '11-20'
         END AS position_bucket
-    FROM
-        `deepdyve-491623.searchconsole.searchdata_url_impression`
-    WHERE
-        query IS NOT NULL
-    GROUP BY
-        data_date, url, query
-    HAVING
-        impressions >= 50
+    FROM base
+    WHERE total_impressions >= 200
+        AND (total_position / NULLIF(total_impressions, 0)) + 1 <= 20
 ),
-ctr_gap_analysis AS (
-    SELECT
-        pcm.*,
-        pba.avg_ctr_for_bucket AS expected_ctr,
-        pba.avg_ctr_for_bucket - pcm.actual_ctr AS ctr_gap,
-        ROUND((pba.avg_ctr_for_bucket - pcm.actual_ctr) * pcm.impressions * 100, 2) AS missed_click_opportunity
-    FROM
-        page_ctr_metrics pcm
-    JOIN
-        position_bucket_averages pba
-        ON pcm.position_bucket = pba.position_bucket
-    WHERE
-        pcm.actual_ctr < pba.avg_ctr_for_bucket
+bucket_averages AS (
+    SELECT position_bucket, SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS avg_ctr
+    FROM page_bucketed GROUP BY position_bucket
 )
 SELECT
-    data_date,
-    url,
-    query,
-    impressions,
-    clicks,
-    ROUND(avg_position, 1) AS avg_position,
-    position_bucket,
-    ROUND(actual_ctr * 100, 2) AS actual_ctr_percent,
-    ROUND(expected_ctr * 100, 2) AS expected_ctr_percent,
-    ROUND(ctr_gap * 100, 2) AS ctr_gap_percent,
-    missed_click_opportunity
-FROM
-    ctr_gap_analysis
+    CASE
+        WHEN ROUND((b.avg_ctr - p.actual_ctr) * p.impressions, 0) >= 50 THEN 'High'
+        WHEN ROUND((b.avg_ctr - p.actual_ctr) * p.impressions, 0) >= 20 THEN 'Med'
+        ELSE 'Low'
+    END AS priority,
+    p.url_path, p.url, p.impressions, p.clicks,
+    ROUND(p.avg_position, 1) AS avg_position,
+    p.position_bucket,
+    ROUND(p.actual_ctr * 100, 2) AS actual_ctr_percent,
+    ROUND(b.avg_ctr * 100, 2) AS expected_ctr_percent,
+    ROUND((b.avg_ctr - p.actual_ctr) * 100, 2) AS ctr_gap_percent,
+    ROUND((b.avg_ctr - p.actual_ctr) * p.impressions, 0) AS missed_clicks
+FROM page_bucketed p
+JOIN bucket_averages b ON p.position_bucket = b.position_bucket
+WHERE p.actual_ctr < b.avg_ctr
 ORDER BY
-    missed_click_opportunity DESC;
+    CASE WHEN ROUND((b.avg_ctr-p.actual_ctr)*p.impressions,0)>=50 THEN 1 WHEN ROUND((b.avg_ctr-p.actual_ctr)*p.impressions,0)>=20 THEN 2 ELSE 3 END,
+    ROUND((b.avg_ctr - p.actual_ctr) * p.impressions, 0) DESC;
 
 -- ============================================================================
 -- View 4: Cannibalization
