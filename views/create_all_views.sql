@@ -64,15 +64,16 @@ ORDER BY
 
 -- ============================================================================
 -- View 2: Content Gaps
--- Keywords ranking on pages that don't explicitly target them
+-- Keywords ranking on structural pages that don't explicitly target them
+-- Filters: excludes individual paper pages, short queries, competitor domains
+-- Priority: High (score>=500), Med (100-499), Low (<100)
 -- ============================================================================
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_content_gaps` AS
 WITH keyword_analysis AS (
     SELECT
-        data_date,
         query,
         url,
-        REGEXP_EXTRACT(url, r'https?://[^/]+(.*)') AS url_path,
+        REGEXP_EXTRACT(url, r'https?://[^/]+(.+)') AS url_path,
         SUM(impressions) AS impressions,
         SUM(clicks) AS clicks,
         (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position,
@@ -81,38 +82,46 @@ WITH keyword_analysis AS (
         `deepdyve-491623.searchconsole.searchdata_url_impression`
     WHERE
         query IS NOT NULL
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
     GROUP BY
-        data_date, query, url
-    HAVING
-        impressions >= 50
+        query, url
+),
+filtered AS (
+    SELECT * FROM keyword_analysis
+    WHERE impressions >= 100
         AND avg_position > 10
+        AND url_path NOT LIKE '/lp/%'
+        AND url_path NOT LIKE '/doc-view%'
+        AND LENGTH(query) > 5
+        AND query NOT LIKE '%.%'
 ),
 gap_detection AS (
-    SELECT
-        *,
+    SELECT *,
         CASE
             WHEN LOWER(COALESCE(url_path, '')) LIKE CONCAT('%', SPLIT(LOWER(query), ' ')[SAFE_OFFSET(0)], '%')
-            THEN FALSE
-            ELSE TRUE
+            THEN FALSE ELSE TRUE
         END AS is_content_gap,
         ROUND(impressions * (avg_position / 20), 2) AS gap_opportunity_score
-    FROM
-        keyword_analysis
+    FROM filtered
 )
 SELECT
-    data_date,
+    CASE
+        WHEN gap_opportunity_score >= 500 THEN 'High'
+        WHEN gap_opportunity_score >= 100 THEN 'Med'
+        ELSE 'Low'
+    END AS priority,
     query,
+    url_path,
     url,
     impressions,
     clicks,
     ROUND(avg_position, 1) AS avg_position,
     ROUND(ctr * 100, 2) AS ctr_percent,
-    gap_opportunity_score
-FROM
-    gap_detection
-WHERE
-    is_content_gap = TRUE
+    ROUND(gap_opportunity_score, 0) AS gap_score
+FROM gap_detection
+WHERE is_content_gap = TRUE
 ORDER BY
+    CASE WHEN gap_opportunity_score >= 500 THEN 1 WHEN gap_opportunity_score >= 100 THEN 2 ELSE 3 END,
     gap_opportunity_score DESC;
 
 -- ============================================================================
