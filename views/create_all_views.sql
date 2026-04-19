@@ -12,11 +12,14 @@
 -- View 1: Quick Wins
 -- Keywords in positions 5-15 with high impressions (easy ranking improvements)
 -- ============================================================================
+-- Priority labels: High (score>=25) = act now, Med (5-24) = this quarter, Low (<5) = monitor
+-- Score formula: (impressions/100) * (15 - avg_position) / 10
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_quick_wins` AS
 WITH keyword_metrics AS (
     SELECT
         query,
         url,
+        REGEXP_EXTRACT(url, r'https?://[^/]+(.+)') AS url_path,
         SUM(impressions) AS impressions,
         SUM(clicks) AS clicks,
         (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position,
@@ -33,9 +36,19 @@ WITH keyword_metrics AS (
     HAVING
         avg_position BETWEEN 5 AND 15
         AND impressions >= 100
+),
+scored AS (
+    SELECT *, ROUND((impressions / 100) * (15 - avg_position) / 10, 2) AS priority_score
+    FROM keyword_metrics
 )
 SELECT
+    CASE
+        WHEN priority_score >= 25 THEN 'High'
+        WHEN priority_score >= 5  THEN 'Med'
+        ELSE 'Low'
+    END AS priority,
     query,
+    url_path,
     url,
     impressions,
     clicks,
@@ -43,10 +56,10 @@ SELECT
     ROUND(ctr * 100, 2) AS ctr_percent,
     first_seen,
     last_seen,
-    ROUND((impressions / 100) * (15 - avg_position) / 10, 2) AS priority_score
-FROM
-    keyword_metrics
+    priority_score
+FROM scored
 ORDER BY
+    CASE WHEN priority_score >= 25 THEN 1 WHEN priority_score >= 5 THEN 2 ELSE 3 END,
     priority_score DESC;
 
 -- ============================================================================
