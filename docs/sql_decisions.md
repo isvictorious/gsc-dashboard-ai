@@ -103,6 +103,32 @@ Use this as a learning reference — these are real decisions made against real 
 
 ---
 
+## Query 05: Brand vs Non-Brand
+
+### Change: Add "deepdive" as third brand term
+**Original:** Only matched "deepdyve" and "deep dyve"
+**Changed to:** Added `OR LOWER(query) LIKE '%deepdive%'`
+**Why:** Real GSC data showed "deepdive" (no space, no y) appearing frequently in the cannibalization report. It's a common misspelling that should be classified as brand traffic.
+**SQL concept:** OR chaining in CASE WHEN — you can add as many OR conditions as needed. Each new brand variant is one more OR clause.
+
+---
+
+### Change: Remove DECLARE statement, hardcode brand terms in CASE WHEN
+**Original:** Used `DECLARE brand_terms ARRAY<STRING>` at the top of the query
+**Changed to:** Brand terms written directly in the CASE WHEN conditions
+**Why:** BigQuery views cannot contain DECLARE statements — variable declarations are only allowed in scripting contexts (bq query sessions), not in view definitions. Any query saved as a view must be a pure SELECT.
+**SQL concept:** View limitations — a BigQuery view is stored as a SELECT statement. It cannot contain procedural elements like DECLARE, SET, or IF. If you need parameterization, use the deploy script to substitute values before creating the view.
+
+---
+
+### Change: Extend date range to 90 days
+**Original:** 30-day window
+**Changed to:** `DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)`
+**Why:** Brand vs non-brand is most useful as a trend line, not a snapshot. 30 days doesn't give enough data points to see meaningful movement. 90 days shows seasonal patterns and the impact of SEO campaigns over time.
+**SQL concept:** DATE_SUB with INTERVAL — BigQuery's date arithmetic. INTERVAL 90 DAY subtracts 90 days from the current date. Other valid units: INTERVAL 3 MONTH, INTERVAL 1 YEAR.
+
+---
+
 ## General Patterns Used Across All Queries
 
 ### NULL-safe division

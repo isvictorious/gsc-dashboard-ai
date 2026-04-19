@@ -117,7 +117,30 @@ The tab bar at the top of the mockup shows: 1-Quick Wins | 2-Content Gaps | 3-CT
 > **Note on the data:** Queries like "deep dive" and "deepdive" appear here because they're common misspellings of DeepDyve. These are borderline brand queries — treat them as brand consolidation issues rather than content cannibalization.
 
 ## Page 5: Brand vs Non-Brand (`v_brand_vs_nonbrand`)
-*Instructions to be added when query is finalized*
+
+### Chart setup (time series — this page is different from the others):
+- Add a **Time Series** chart, not a table
+- Dimension: `data_date`
+- Breakdown dimension: `traffic_type` (Brand vs Non-Brand)
+- Metric: `click_share_pct`
+- This shows the trend of brand vs non-brand share over time
+
+### Also add a summary table below the chart:
+- Dimensions: `traffic_type`
+- Metrics: `total_clicks`, `total_impressions`, `ctr_percent`, `avg_position`, `unique_queries`
+- Date range: last 30 days
+
+### Summary scorecards:
+- Non-Brand `click_share_pct` → "Non-Brand Click Share %"
+- Non-Brand `total_clicks` → "Non-Brand Clicks"
+- Brand `total_clicks` → "Brand Clicks"
+
+### Text block:
+> **What to look for:** Non-brand click share should be growing over time. If brand traffic is > 50% of clicks, your site is dependent on people who already know you — SEO isn't reaching new audiences yet.
+>
+> **Brand terms tracked:** deepdyve, deep dyve, deepdive (common misspelling). To add or change brand terms, update the view in BigQuery.
+>
+> **Note:** This report uses a 90-day window by default (vs 30 days for other reports) to make the trend line more meaningful.
 
 ## Page 6: Page Performance (`v_page_performance`)
 *Instructions to be added when query is finalized*

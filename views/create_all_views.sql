@@ -224,45 +224,37 @@ ORDER BY severity_score DESC, query, impressions DESC;
 
 -- ============================================================================
 -- View 5: Brand vs Non-Brand
--- Traffic split analysis between branded and non-branded searches
--- Note: Brand terms are hardcoded here; update for your site
+-- Daily traffic split — use as a time series chart in Looker
+-- Brand terms: deepdyve, deep dyve, deepdive (common misspelling)
+-- To update brand terms: edit this view and queries/05_brand_vs_nonbrand.sql
 -- ============================================================================
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_brand_vs_nonbrand` AS
-WITH classified_traffic AS (
+WITH classified AS (
     SELECT
-        data_date,
-        query,
-        url,
-        impressions,
-        clicks,
-        sum_position,
+        data_date, query, impressions, clicks, sum_position,
         CASE
             WHEN LOWER(query) LIKE '%deepdyve%'
                 OR LOWER(query) LIKE '%deep dyve%'
+                OR LOWER(query) LIKE '%deepdive%'
             THEN 'Brand'
             ELSE 'Non-Brand'
         END AS traffic_type
-    FROM
-        `deepdyve-491623.searchconsole.searchdata_url_impression`
-    WHERE
-        query IS NOT NULL
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+    WHERE query IS NOT NULL
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
 )
 SELECT
     data_date,
     traffic_type,
     COUNT(DISTINCT query) AS unique_queries,
-    COUNT(DISTINCT url) AS unique_urls,
     SUM(impressions) AS total_impressions,
     SUM(clicks) AS total_clicks,
     ROUND(SAFE_DIVIDE(SUM(clicks), SUM(impressions)) * 100, 2) AS ctr_percent,
     ROUND((SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1, 1) AS avg_position,
-    ROUND(SUM(clicks) * 100.0 / SUM(SUM(clicks)) OVER (PARTITION BY data_date), 1) AS click_share_percent
-FROM
-    classified_traffic
-GROUP BY
-    data_date, traffic_type
-ORDER BY
-    data_date DESC, traffic_type;
+    ROUND(SUM(clicks) * 100.0 / SUM(SUM(clicks)) OVER (PARTITION BY data_date), 1) AS click_share_pct
+FROM classified
+GROUP BY data_date, traffic_type
+ORDER BY data_date DESC, traffic_type;
 
 -- ============================================================================
 -- View 6: Page Performance
