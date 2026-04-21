@@ -1,18 +1,34 @@
 -- ============================================================================
 -- Page Performance Report
 -- ============================================================================
--- Purpose: Identify top-performing pages AND zombie pages (no clicks despite impressions)
+-- Purpose: Two-part report combining top performers and zombie pages
 --
--- Top Pages: Your traffic drivers - protect and optimize these
--- Zombie Pages: Wasted crawl budget - improve, consolidate, or noindex
+-- Top Performers: Pages actually driving traffic — protect and optimize these
+-- Zombie Pages: Pages with impressions but zero clicks — wasted crawl budget
+--
+-- Why zombies matter: Google allocates a crawl budget to your site. Pages
+-- that rank but never get clicked signal poor quality to Google and dilute
+-- authority away from your best pages.
+--
+-- How to action zombies:
+--   Option A: Improve — rewrite title/description to get clicks
+--   Option B: Consolidate — merge content into a stronger page
+--   Option C: Noindex — tell Google to stop crawling/indexing this page
+--
+-- Filters:
+--   - Exclude individual paper pages (/lp/, /doc-view) — noise filter
+--   - Top performers: minimum 1 click
+--   - Zombies: minimum 200 impressions, exactly 0 clicks
+--   - Top 25 of each category (configurable via LIMIT)
+--
+-- NOTE: This report does NOT group by date — it shows aggregated 30-day
+-- performance per page. One row per page per category.
 -- ============================================================================
 
--- Top performing pages by clicks
-WITH top_pages AS (
+WITH base AS (
     SELECT
-        data_date,
         url,
-        'Top Performer' AS page_category,
+        REGEXP_EXTRACT(url, r'https?://[^/]+(.+)') AS url_path,
         SUM(impressions) AS impressions,
         SUM(clicks) AS clicks,
         (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position,
@@ -22,76 +38,63 @@ WITH top_pages AS (
         `deepdyve-491623.searchconsole.searchdata_url_impression`
     WHERE
         query IS NOT NULL
-    GROUP BY
-        data_date, url
-    HAVING
-        -- Must have actual traffic
-        SUM(clicks) > 0
-    ORDER BY
-        clicks DESC
-    LIMIT 50
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        AND url NOT LIKE '%/lp/%'
+        AND url NOT LIKE '%/doc-view%'
+    GROUP BY url
 ),
 
--- Zombie pages: impressions but no clicks
+top_pages AS (
+    SELECT *, 'Top Performer' AS page_category
+    FROM base
+    WHERE clicks > 0
+    ORDER BY clicks DESC
+    LIMIT 25
+),
+
 zombie_pages AS (
-    SELECT
-        data_date,
-        url,
-        'Zombie Page' AS page_category,
-        SUM(impressions) AS impressions,
-        SUM(clicks) AS clicks,
-        (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position,
-        SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
-        COUNT(DISTINCT query) AS ranking_keywords
-    FROM
-        `deepdyve-491623.searchconsole.searchdata_url_impression`
+    SELECT *, 'Zombie Page' AS page_category
+    FROM base
     WHERE
-        query IS NOT NULL
-    GROUP BY
-        data_date, url
-    HAVING
-        -- Meaningful impressions but zero clicks = problem
-        SUM(impressions) >= 100
-        AND SUM(clicks) = 0
-    ORDER BY
-        impressions DESC
-    LIMIT 50
-),
-
--- Combine both result sets
-combined_results AS (
-    SELECT * FROM top_pages
-    UNION ALL
-    SELECT * FROM zombie_pages
+        -- Must have meaningful impressions to qualify as a zombie
+        impressions >= 200
+        -- Exactly zero clicks despite ranking
+        AND clicks = 0
+    ORDER BY impressions DESC
+    LIMIT 25
 )
 
--- Final output with metadata
 SELECT
-    cr.data_date,
-    cr.page_category,
-    cr.url,
-    cr.impressions,
-    cr.clicks,
-    ROUND(cr.avg_position, 1) AS avg_position,
-    ROUND(cr.ctr * 100, 2) AS ctr_percent,
-    cr.ranking_keywords,
-    -- Page metadata for context (Phase 2)
-    pm.title AS page_title,
-    pm.word_count,
-    pm.last_modified,
-    -- Performance indicator
+    page_category,
+    url_path,
+    url,
+    impressions,
+    clicks,
+    ROUND(avg_position, 1) AS avg_position,
+    ROUND(ctr * 100, 2) AS ctr_percent,
+    ranking_keywords,
+    -- Performance indicator for sorting in Looker
+    -- Top performers: positive (clicks), Zombies: negative (impressions wasted)
     CASE
-        WHEN cr.page_category = 'Top Performer' THEN cr.clicks
-        WHEN cr.page_category = 'Zombie Page' THEN -cr.impressions
-    END AS performance_score
-FROM
-    combined_results cr
-LEFT JOIN
-    `deepdyve-491623.searchconsole.page_metadata` pm
-    ON cr.url = pm.url
+        WHEN page_category = 'Top Performer' THEN clicks
+        ELSE -impressions
+    END AS performance_indicator
+FROM top_pages
+UNION ALL
+SELECT
+    page_category,
+    url_path,
+    url,
+    impressions,
+    clicks,
+    ROUND(avg_position, 1) AS avg_position,
+    ROUND(ctr * 100, 2) AS ctr_percent,
+    ranking_keywords,
+    CASE
+        WHEN page_category = 'Top Performer' THEN clicks
+        ELSE -impressions
+    END AS performance_indicator
+FROM zombie_pages
 ORDER BY
-    cr.page_category,
-    CASE
-        WHEN cr.page_category = 'Top Performer' THEN cr.clicks
-        ELSE cr.impressions
-    END DESC
+    page_category,
+    ABS(performance_indicator) DESC

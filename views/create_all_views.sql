@@ -258,74 +258,43 @@ ORDER BY data_date DESC, traffic_type;
 
 -- ============================================================================
 -- View 6: Page Performance
--- Top performers and zombie pages (high impressions, zero clicks)
+-- Top 25 pages by clicks + Top 25 zombie pages (impressions, zero clicks)
+-- Excludes individual paper pages — aggregated 30-day view per page
 -- ============================================================================
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_page_performance` AS
-WITH top_pages AS (
-    SELECT
-        data_date,
-        url,
-        'Top Performer' AS page_category,
-        SUM(impressions) AS impressions,
-        SUM(clicks) AS clicks,
+WITH base AS (
+    SELECT url, REGEXP_EXTRACT(url, r'https?://[^/]+(.+)') AS url_path,
+        SUM(impressions) AS impressions, SUM(clicks) AS clicks,
         (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position,
         SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
         COUNT(DISTINCT query) AS ranking_keywords
-    FROM
-        `deepdyve-491623.searchconsole.searchdata_url_impression`
-    WHERE
-        query IS NOT NULL
-    GROUP BY
-        data_date, url
-    HAVING
-        SUM(clicks) > 0
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+    WHERE query IS NOT NULL
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        AND url NOT LIKE '%/lp/%' AND url NOT LIKE '%/doc-view%'
+    GROUP BY url
+),
+top_pages AS (
+    SELECT *, 'Top Performer' AS page_category FROM base WHERE clicks > 0
+    ORDER BY clicks DESC LIMIT 25
 ),
 zombie_pages AS (
-    SELECT
-        data_date,
-        url,
-        'Zombie Page' AS page_category,
-        SUM(impressions) AS impressions,
-        SUM(clicks) AS clicks,
-        (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position,
-        SAFE_DIVIDE(SUM(clicks), SUM(impressions)) AS ctr,
-        COUNT(DISTINCT query) AS ranking_keywords
-    FROM
-        `deepdyve-491623.searchconsole.searchdata_url_impression`
-    WHERE
-        query IS NOT NULL
-    GROUP BY
-        data_date, url
-    HAVING
-        SUM(impressions) >= 100
-        AND SUM(clicks) = 0
+    SELECT *, 'Zombie Page' AS page_category FROM base
+    WHERE impressions >= 200 AND clicks = 0
+    ORDER BY impressions DESC LIMIT 25
 )
-SELECT
-    data_date,
-    page_category,
-    url,
-    impressions,
-    clicks,
-    ROUND(avg_position, 1) AS avg_position,
-    ROUND(ctr * 100, 2) AS ctr_percent,
-    ranking_keywords
-FROM
-    top_pages
+SELECT page_category, url_path, url, impressions, clicks,
+    ROUND(avg_position, 1) AS avg_position, ROUND(ctr * 100, 2) AS ctr_percent,
+    ranking_keywords,
+    CASE WHEN page_category = 'Top Performer' THEN clicks ELSE -impressions END AS performance_indicator
+FROM top_pages
 UNION ALL
-SELECT
-    data_date,
-    page_category,
-    url,
-    impressions,
-    clicks,
-    ROUND(avg_position, 1) AS avg_position,
-    ROUND(ctr * 100, 2) AS ctr_percent,
-    ranking_keywords
-FROM
-    zombie_pages
-ORDER BY
-    page_category,
-    clicks DESC;
+SELECT page_category, url_path, url, impressions, clicks,
+    ROUND(avg_position, 1) AS avg_position, ROUND(ctr * 100, 2) AS ctr_percent,
+    ranking_keywords,
+    CASE WHEN page_category = 'Top Performer' THEN clicks ELSE -impressions END AS performance_indicator
+FROM zombie_pages
+ORDER BY page_category, ABS(performance_indicator) DESC;
 
 -- ============================================================================
 -- View 7: Crawl Health (Stub)
