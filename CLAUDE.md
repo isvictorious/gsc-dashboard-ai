@@ -4,10 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SEO intelligence pipeline with 3 phases:
+SEO intelligence pipeline with 4 phases:
 - **Phase 1:** BigQuery SQL queries + views → Looker Studio dashboards (8 reports)
+- **Phase 1.5:** Cloudflare log integration → Crawl Health + Error Reconciliation reports
 - **Phase 2:** Automated Screaming Frog cloud crawls → metadata into BigQuery
 - **Phase 3:** WordPress MCP integration → automated SEO fixes
+
+### Phase 1.5: Cloudflare Log Integration
+Unlocks reports 7 and 8 which are currently stubs.
+Required to diagnose why GSC traffic is lower than expected — crawl issues
+and server errors are invisible without server-side log data.
+
+Pipeline:
+  Cloudflare → Logflare → BigQuery (cloudflare_logs table)
+
+Optional for other projects: any CDN with log export capability works.
+Cloudflare is the reference implementation.
+
+Tables needed:
+  - `searchconsole.cloudflare_logs` — raw request logs (url, status_code, user_agent, timestamp, cache_status)
+  - `searchconsole.gsc_url_inspection` — GSC coverage data (exported separately or via API)
 
 ## GCP Configuration
 
@@ -41,9 +57,14 @@ bq ls deepdyve-491623:searchconsole
 
 ```
 GSC → BigQuery (daily export)
-Screaming Frog → Cloud VM → BigQuery (Phase 2: weekly crawl)
-BigQuery Views → Looker Studio (8 dashboard reports)
-Dashboard Fixes → WordPress MCP (Phase 3: automated implementation)
+                    ↓
+          BigQuery Views → Looker Studio (Phase 1: 8 reports)
+                    ↓
+Cloudflare → Logflare → BigQuery (Phase 1.5: crawl + error reports)
+                    ↓
+Screaming Frog → Cloud VM → BigQuery (Phase 2: page metadata)
+                    ↓
+WordPress MCP → automated fixes (Phase 3)
 ```
 
 ## The 8 Reports

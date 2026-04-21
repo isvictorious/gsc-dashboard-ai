@@ -219,10 +219,59 @@ Use this as a reference when reviewing with clients. Each report has a direction
 > **Warning:** Zombie list growing month over month — content is being added without SEO intent. Or top performers losing clicks — check for ranking drops in Quick Wins report.
 
 ## Page 7: Crawl Health (`v_crawl_health`)
-*Stub — awaiting Cloudflare integration (Phase 2)*
+**Status: Stub — awaiting Phase 1.5 (Cloudflare log integration)**
+
+This view is deployed but returns no data until Cloudflare logs are piped into BigQuery.
+Phase 1.5 happens after the Looker dashboard is complete.
+
+### What this will show (Phase 2):
+- How often Googlebot crawls each page
+- Response times Googlebot sees
+- Cache hit/miss rates (are pages being served fast?)
+- Status codes Googlebot receives (200, 404, 500, etc.)
+
+### Looker setup (do when data exists):
+- Table with dimensions: `url_path`, `bot_type`, `cache_status`
+- Metrics: `crawl_count`, `avg_response_time_ms`, `status_code`
+- Filter to `bot_type = Googlebot`
+
+### What good looks like (Phase 2):
+> **Healthy:** Important pages crawled frequently, fast response times (<500ms), high cache hit rate, all 200 status codes.
+> **Warning:** Important pages not being crawled, slow response times, high rate of non-200 responses to Googlebot — any of these can suppress rankings even if content is good.
+
+### In the meantime:
+Connect this page in Looker now with `v_crawl_health` as the data source. It will show "no data" until Phase 2 is complete — that's expected. Add a text block explaining this to the client:
+> **Coming in Phase 2:** This report will show Googlebot crawl activity once Cloudflare log integration is set up. For now, use Google Search Console's Coverage report for crawl error monitoring.
+
+---
 
 ## Page 8: Error Reconciliation (`v_error_reconciliation`)
-*Stub — awaiting Cloudflare integration (Phase 2)*
+**Status: Stub — awaiting Phase 1.5 (Cloudflare log integration)**
+
+This view is deployed but returns no data until both GSC inspection data and Cloudflare logs are available.
+Phase 1.5 happens after the Looker dashboard is complete.
+
+### What this will show (Phase 2):
+Compares GSC-reported errors against actual server responses to categorize:
+- **Phantom errors** — GSC shows error but server returns 200 (stale GSC data, safe to ignore)
+- **CF Edge errors** — Cloudflare returning error before reaching origin
+- **Origin errors** — actual server error from WordPress/hosting
+- **True 404s** — page genuinely doesn't exist
+
+### Why this matters:
+GSC often shows errors that aren't real. Without this reconciliation, teams waste time "fixing" pages that are actually fine — while missing real errors that are genuinely hurting rankings.
+
+### Looker setup (do when data exists):
+- Table with dimensions: `url`, `error_category`, `gsc_status`
+- Metrics: `actual_status_code`, `last_crawl_timestamp`
+- Sort by `error_category` — fix Origin errors first, ignore Phantom errors
+
+### What good looks like (Phase 2):
+> **Healthy:** Error count decreasing, majority of GSC errors classified as Phantom (stale data), zero Origin errors.
+> **Warning:** Growing Origin errors = server instability hurting rankings. Growing True 404s = content being deleted without redirects.
+
+### In the meantime:
+> **Coming in Phase 2:** This report reconciles GSC errors against real server responses. Until then, use GSC's Coverage report directly — but note that many "errors" shown there may be phantom errors that don't need fixing.
 
 ---
 

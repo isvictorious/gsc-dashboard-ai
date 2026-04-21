@@ -29,7 +29,7 @@ SELECT
     -- Status message
     'GSC inspection data and Cloudflare logs not yet integrated' AS status_message
 
-WHERE FALSE  -- Returns no rows until real data exists
+FROM (SELECT 1) WHERE FALSE  -- Returns no rows until real data exists
 
 -- ============================================================================
 -- FUTURE IMPLEMENTATION (uncomment when data sources are available):
