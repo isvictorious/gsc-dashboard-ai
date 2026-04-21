@@ -72,14 +72,19 @@ A keyword with 10,000 impressions and 0 clicks at position 45 is not an opportun
 Google Search Console
         │
         ▼
-BigQuery (daily export)
+BigQuery (daily export)                          ← Phase 1 (now)
 searchconsole.searchdata_url_impression
         │
         ▼
-BigQuery Views (v_quick_wins, v_content_gaps, etc.)
+BigQuery Views → Looker Studio (8-page dashboard)
+
+        +── Cloudflare → Logflare → BigQuery     ← Phase 1.5
+        │   Unlocks: Crawl Health, Error Reconciliation
         │
-        ▼
-Looker Studio (8-page dashboard)
+        +── Screaming Frog → Cloud VM → BigQuery ← Phase 2
+        │   Unlocks: page metadata (title, H1, word count)
+        │
+        └── WordPress MCP → automated fixes      ← Phase 3
 ```
 
 ---

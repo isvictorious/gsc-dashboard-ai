@@ -219,9 +219,10 @@ Use this as a reference when reviewing with clients. Each report has a direction
 > **Warning:** Zombie list growing month over month — content is being added without SEO intent. Or top performers losing clicks — check for ranking drops in Quick Wins report.
 
 ## Page 7: Crawl Health (`v_crawl_health`)
-**Status: Stub — awaiting Phase 2 (Cloudflare log integration)**
+**Status: Stub — awaiting Phase 1.5 (Cloudflare log integration)**
 
 This view is deployed but returns no data until Cloudflare logs are piped into BigQuery.
+Phase 1.5 happens after the Looker dashboard is complete.
 
 ### What this will show (Phase 2):
 - How often Googlebot crawls each page
@@ -245,9 +246,10 @@ Connect this page in Looker now with `v_crawl_health` as the data source. It wil
 ---
 
 ## Page 8: Error Reconciliation (`v_error_reconciliation`)
-**Status: Stub — awaiting Phase 2 (Cloudflare log integration)**
+**Status: Stub — awaiting Phase 1.5 (Cloudflare log integration)**
 
 This view is deployed but returns no data until both GSC inspection data and Cloudflare logs are available.
+Phase 1.5 happens after the Looker dashboard is complete.
 
 ### What this will show (Phase 2):
 Compares GSC-reported errors against actual server responses to categorize:
