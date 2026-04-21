@@ -310,7 +310,7 @@ SELECT
     CAST(NULL AS FLOAT64) AS avg_response_time_ms,
     CAST(NULL AS STRING) AS cache_status,
     'Cloudflare log integration pending' AS status_message
-WHERE FALSE;
+FROM (SELECT 1) WHERE FALSE;
 
 -- ============================================================================
 -- View 8: Error Reconciliation (Stub)
@@ -325,4 +325,4 @@ SELECT
     CAST(NULL AS STRING) AS error_category,
     CAST(NULL AS STRING) AS cloudflare_cache_status,
     'GSC and Cloudflare integration pending' AS status_message
-WHERE FALSE;
+FROM (SELECT 1) WHERE FALSE;

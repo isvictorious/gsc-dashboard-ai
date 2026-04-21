@@ -32,7 +32,7 @@ SELECT
     -- Status message
     'Cloudflare log integration not yet configured' AS status_message
 
-WHERE FALSE  -- Returns no rows until real data exists
+FROM (SELECT 1) WHERE FALSE  -- Returns no rows until real data exists
 
 -- ============================================================================
 -- FUTURE IMPLEMENTATION (uncomment when Cloudflare logs are available):
