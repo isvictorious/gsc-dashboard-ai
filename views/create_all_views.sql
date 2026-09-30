@@ -36,6 +36,13 @@ WITH keyword_metrics AS (
     HAVING
         avg_position BETWEEN 5 AND 15
         AND impressions >= 100
+        -- Noise filters (same pattern as v_content_gaps): suppress
+        -- academic-title false matches (adult content, competitor domains,
+        -- single common words) so real opportunities aren't drowned out
+        AND url_path NOT LIKE '/lp/%'
+        AND url_path NOT LIKE '/doc-view%'
+        AND LENGTH(query) > 5
+        AND query NOT LIKE '%.%'
 ),
 scored AS (
     SELECT *, ROUND((impressions / 100) * (15 - avg_position) / 10, 2) AS priority_score

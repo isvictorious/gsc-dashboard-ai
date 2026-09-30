@@ -39,6 +39,19 @@ Use this as a learning reference — these are real decisions made against real 
 
 ---
 
+### Change: Add four noise filters (ported from Query 02)
+**Original:** Only filtered on `avg_position BETWEEN 5 AND 15` and `impressions >= 100` — no filtering for academic-title false positives.  
+**Changed to:** Added the same four filters used in Content Gaps to the `HAVING` clause:
+1. `url_path NOT LIKE '/lp/%'` — exclude individual paper landing pages
+2. `url_path NOT LIKE '/doc-view%'` — exclude individual paper viewer pages
+3. `LENGTH(query) > 5` — exclude short words like "deep", "rat", "xxx"
+4. `query NOT LIKE '%.%'` — exclude competitor domain queries
+
+**Why:** Without these filters, Quick Wins surfaced adult-content and competitor-domain noise (e.g. "indan sex", "xxxxsex", "china xxx") as High/Med priority — these queries often carry large impression counts, so they dominated the priority score and buried real opportunities. Verified against live data post-filter: distribution moved to 3 High / 7 Med / 113 Low (score range 0.3–40.59), which is a healthy non-degenerate spread, so the existing High >=25 / Med >=5-24 thresholds did not need re-tuning.  
+**SQL concept:** Same noise-filtering pattern as Query 02 — reusing a proven filter set across reports keeps report logic consistent instead of re-deriving thresholds per report.
+
+---
+
 ## Query 02: Content Gaps
 
 ### Change: Add four noise filters

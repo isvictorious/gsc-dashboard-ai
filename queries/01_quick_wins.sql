@@ -7,6 +7,17 @@
 -- Key insight: Position is zero-based in raw GSC data, so we add 1 for display
 -- Formula: actual_position = (sum_position / impressions) + 1
 --
+-- FALSE POSITIVE FILTERING (same pattern as 02_content_gaps.sql):
+-- DeepDyve indexes millions of academic papers whose titles contain letter
+-- combinations that coincidentally match unrelated searches (adult content,
+-- competitor domains, single common words). Without filtering, those noise
+-- queries dominate this report because they often have huge impression
+-- counts. We apply the same four filters used in Content Gaps:
+--   1. Exclude /lp/ and /doc-view/ paths (individual paper pages)
+--   2. Minimum query length > 5 characters
+--   3. Exclude queries containing a dot (competitor domain searches)
+--   4. Minimum 100 impressions (already present, kept as-is)
+--
 -- Priority labels explained:
 --   High = score >= 25  → High impressions + close to top 5. Fix these first.
 --   Med  = score 5-24   → Good opportunity, worth optimizing this quarter.
@@ -39,6 +50,11 @@ WITH keyword_metrics AS (
     HAVING
         avg_position BETWEEN 5 AND 15
         AND impressions >= 100
+        -- Noise filters (see header comment)
+        AND url_path NOT LIKE '/lp/%'
+        AND url_path NOT LIKE '/doc-view%'
+        AND LENGTH(query) > 5
+        AND query NOT LIKE '%.%'
 ),
 
 scored AS (
