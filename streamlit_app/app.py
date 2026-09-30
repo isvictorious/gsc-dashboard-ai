@@ -95,7 +95,7 @@ def get_bq_client():
     return bigquery.Client(project=PROJECT)
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
 def load_quick_wins() -> pd.DataFrame:
     client = get_bq_client()
     return client.query(
@@ -103,7 +103,7 @@ def load_quick_wins() -> pd.DataFrame:
     ).to_dataframe()
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
 def load_content_gaps() -> pd.DataFrame:
     client = get_bq_client()
     return client.query(
@@ -111,7 +111,7 @@ def load_content_gaps() -> pd.DataFrame:
     ).to_dataframe()
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
 def load_top3_avg_ctr() -> float:
     """Real site-wide average CTR for pages ranking position 1-3, last 30 days.
     Same bucket-average technique used in v_ctr_optimization."""
