@@ -18,6 +18,11 @@ config/project.env
 .idea/
 *.swp
 
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
 # Logs
 *.log
 logs/
