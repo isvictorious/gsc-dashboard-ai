@@ -75,6 +75,17 @@ Use this as a learning reference — these are real decisions made against real 
 
 ---
 
+### Change: Exclude /browse/ journal pages and brand queries
+**Original:** Only the four noise filters above — no exclusion for journal catalog pages or brand terms.  
+**Changed to:** Two more conditions added to the `filtered` CTE:
+5. `url_path NOT LIKE '/browse/%'` — exclude journal catalog pages
+6. Brand term exclusion (`deepdyve`, `deep dyve`, `deepdive`, `deepstore`) — same pattern as `v_cannibalization`/`v_brand_vs_nonbrand`
+
+**Why:** The gap-detection logic (does the query's first word appear in the URL?) only makes sense on URLs that encode topic words, like a blog post slug. DeepDyve's `/browse/journals/{ID}/...` pages are pure database IDs — they never contain topic words for ANY journal, dedicated or not. So every query landing on a journal page always failed the check, even when that page is the correct, already-existing dedicated page (e.g. "current psychology" landing on the Current Psychology journal's own browse page). Before this fix, 100% of returned rows were this false positive. Brand/navigational queries ("deepdyve login" landing on `/pricing`) had the same problem once `/browse/` noise was removed. After both fixes, the report correctly returns very few or zero rows — DeepDyve is a catalog site with minimal blog/editorial content, so there's genuinely little content-gap opportunity right now. That's an accurate result, not a bug.  
+**SQL concept:** A detection heuristic is only as good as the assumption it depends on — here, "URLs contain topic words." When that assumption doesn't hold for part of a site (ID-based catalog URLs), exclude that part rather than let it silently produce wrong answers.
+
+---
+
 ## Query 03: CTR Optimization
 
 ### Change: Complete rewrite of CTE structure

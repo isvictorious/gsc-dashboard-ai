@@ -12,7 +12,7 @@
 -- DeepDyve indexes millions of academic papers. Some papers contain letter
 -- combinations (e.g. "XXXX sex chromosome", "xxxvl bird eggs") that happen
 -- to match unrelated search queries. These are NOT real content gaps.
--- We apply four filters to suppress this noise:
+-- We apply six filters to suppress this noise:
 --
 --   1. Exclude individual paper pages (/lp/ and /doc-view/ paths)
 --      These are paper landing pages where academic terminology causes
@@ -22,6 +22,16 @@
 --   3. Exclude queries containing a dot (.) — these are competitor domains
 --      appearing as navigational queries (e.g. "somearticles.com")
 --   4. Minimum 100 impressions — removes long-tail noise
+--   5. Exclude /browse/ pages (journal catalog, ID-based URLs like
+--      /browse/journals/1046-1310/...) — these URLs never contain topic
+--      words for ANY journal, dedicated or not, so the "keyword not in
+--      URL" check always fires as a false positive. A query like
+--      "current psychology" landing on the Current Psychology journal's
+--      own page is the system working correctly, not a gap.
+--   6. Exclude brand/navigational queries (deepdyve, deep dyve, deepdive,
+--      deepstore) — same brand-term pattern used in v_cannibalization and
+--      v_brand_vs_nonbrand. People searching for the brand and landing on
+--      /login, /pricing, /about aren't content gaps.
 --
 -- Gap opportunity score: impressions × (avg_position / 20)
 -- Higher position number (further from #1) + more impressions = bigger gap
@@ -62,6 +72,13 @@ filtered AS (
         AND LENGTH(query) > 5
         -- Filter 3: exclude competitor domain navigational queries
         AND query NOT LIKE '%.%'
+        -- Filter 5: exclude journal catalog pages (ID-based URLs, see header)
+        AND url_path NOT LIKE '/browse/%'
+        -- Filter 6: exclude brand/navigational queries
+        AND LOWER(query) NOT LIKE '%deepdyve%'
+        AND LOWER(query) NOT LIKE '%deep dyve%'
+        AND LOWER(query) NOT LIKE '%deepdive%'
+        AND LOWER(query) NOT LIKE '%deepstore%'
 ),
 
 gap_detection AS (
