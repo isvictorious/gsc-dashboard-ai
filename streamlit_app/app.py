@@ -73,6 +73,26 @@ td.url a:hover { text-decoration:underline; }
 .empty-state p { font-size:13px; color:var(--text-dim); line-height:1.6; margin:0 0 10px; }
 .empty-state p:last-child { margin-bottom:0; }
 .empty-state code { background:var(--surface2); padding:1px 5px; border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--accent); }
+
+.mock-banner { background:var(--red-soft); border:2px solid var(--red); border-radius:8px; padding:16px 20px; margin-bottom:20px; }
+.mock-banner .mock-title { font-size:14px; font-weight:700; color:var(--red); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
+.mock-banner p { font-size:13px; color:var(--text); line-height:1.5; margin:0; }
+
+.chart-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }
+.chart-box { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; }
+.chart-box .chart-title { font-size:13px; font-weight:600; margin-bottom:12px; color:var(--text); }
+.donut-wrap { display:flex; align-items:center; gap:24px; }
+.donut { width:110px; height:110px; border-radius:50%; position:relative; flex-shrink:0; }
+.donut-center { position:absolute; inset:18px; background:var(--surface); border-radius:50%; display:flex; align-items:center; justify-content:center; flex-direction:column; }
+.donut-center .val { font-size:17px; font-weight:700; color:var(--text); }
+.donut-center .lbl { font-size:9px; color:var(--text-dim); }
+.legend { display:flex; flex-direction:column; gap:6px; }
+.legend-item { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text); }
+.legend-dot { width:10px; height:10px; border-radius:3px; flex-shrink:0; }
+
+.flow-step { background:var(--surface2); border-radius:8px; padding:12px 18px; text-align:center; flex:1; min-width:140px; }
+.flow-step .flow-title { font-weight:600; font-size:13px; }
+.flow-step .flow-sub { font-size:11px; color:var(--text-dim); margin-top:2px; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -849,6 +869,209 @@ def page_performance_tab():
         )
 
 
+def mock_data_banner(report_name: str) -> None:
+    st.markdown(
+        '<div class="mock-banner">'
+        f'<div class="mock-title">⚠️ Sample data — not live</div>'
+        f"<p>Everything below is illustrative example data showing what "
+        f"<strong>{html.escape(report_name)}</strong> will look like once it's "
+        "built — none of these numbers are real. This report needs "
+        "Cloudflare log integration (Phase 1.5), which hasn't been built yet. "
+        "See <code>docs/phase1.5_cloudflare_setup.md</code> for the setup "
+        "roadmap.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def donut_chart(title: str, segments: list, center_val: str, center_lbl: str) -> str:
+    """segments: list of (label, pct, color_var, detail) tuples, pct summing to ~100."""
+    stops = []
+    cursor = 0
+    for _, pct, color, _ in segments:
+        stops.append(f"var({color}) {cursor}% {cursor + pct}%")
+        cursor += pct
+    gradient = ", ".join(stops)
+    legend_items = "".join(
+        f'<div class="legend-item"><div class="legend-dot" style="background:var({color})"></div>'
+        f"{html.escape(label)} — {pct}% ({html.escape(detail)})</div>"
+        for label, pct, color, detail in segments
+    )
+    return (
+        '<div class="chart-box">'
+        f'<div class="chart-title">{html.escape(title)}</div>'
+        '<div class="donut-wrap">'
+        f'<div class="donut" style="background:conic-gradient({gradient});">'
+        f'<div class="donut-center"><div class="val">{center_val}</div>'
+        f'<div class="lbl">{html.escape(center_lbl)}</div></div></div>'
+        f'<div class="legend">{legend_items}</div>'
+        "</div></div>"
+    )
+
+
+def crawl_health_tab():
+    mock_data_banner("Crawl Health")
+
+    st.markdown(
+        '<div class="page-title">Crawl Health — Googlebot Behavior & Status Codes</div>'
+        '<div class="page-sub">How Googlebot is crawling your site: volume, '
+        "frequency, response codes, and crawl budget waste. Requires Cloudflare "
+        "logs blended with GSC data.</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="action-box">'
+        '<div class="label">How this will work</div>'
+        "<p>This report will show what Googlebot actually experiences when it "
+        "hits your site — not just what GSC reports with a 2-3 day lag. "
+        "If Cloudflare is serving cached/stale content to Googlebot, or crawl "
+        "volume drops suddenly, this is where you'd see it first.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="scorecards">'
+        '<div class="card"><div class="card-label">Googlebot Requests / Day</div>'
+        '<div class="card-val">1,842</div></div>'
+        '<div class="card"><div class="card-label">Unique URLs Crawled</div>'
+        '<div class="card-val">347</div></div>'
+        '<div class="card"><div class="card-label">Crawl Errors (5xx)</div>'
+        '<div class="card-val" style="color:var(--red)">23</div></div>'
+        '<div class="card"><div class="card-label">Avg Response Time</div>'
+        '<div class="card-val">420ms</div></div>'
+        '<div class="card"><div class="card-label">CF Cache Hit Rate</div>'
+        '<div class="card-val" style="color:var(--green)">68%</div></div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    status_donut = donut_chart(
+        "Googlebot Status Code Distribution (example)",
+        [
+            ("200 OK", 72, "--green", "1,326/day"),
+            ("301/302", 12, "--amber", "221/day"),
+            ("5xx Errors", 7, "--red", "129/day"),
+            ("404", 9, "--accent", "166/day"),
+        ],
+        "72%", "200 OK",
+    )
+    cache_donut = donut_chart(
+        "Cloudflare Cache Status for Googlebot (example)",
+        [
+            ("HIT (cached)", 68, "--accent", "cached"),
+            ("MISS (origin fetch)", 17, "--amber", "origin fetch"),
+            ("DYNAMIC/BYPASS", 15, "--red", "bypass"),
+        ],
+        "68%", "HIT",
+    )
+    st.markdown(f'<div class="chart-row">{status_donut}{cache_donut}</div>', unsafe_allow_html=True)
+
+    example_5xx = [
+        ("/example/calendar-page/", "500", 142, "DYNAMIC", "CF edge timeout on dynamic queries"),
+        ("/example/api-endpoint/", "500", 98, "BYPASS", "REST API timeout at CF edge"),
+        ("/example/course-page/", "502", 67, "MISS", "Confirmed origin error"),
+        ("/example/feed/", "500", 54, "DYNAMIC", "RSS feed timing out at CF edge"),
+    ]
+    rows = "".join(
+        f'<tr><td class="url">{html.escape(path)}</td><td class="mono" '
+        f'style="color:var(--red)">{status}</td><td class="mono">{hits}</td>'
+        f'<td>{cache}</td><td style="font-size:12px;color:var(--amber)">{html.escape(cause)}</td></tr>'
+        for path, status, hits, cache, cause in example_5xx
+    )
+    st.markdown(
+        '<div class="tbl-wrap"><div class="tbl-title" style="color:var(--red)">'
+        "⚠️ URLs Returning 5xx to Googlebot (example)</div>"
+        '<table class="report"><thead><tr><th>URL</th><th>Status</th>'
+        "<th>Hits (30d)</th><th>CF Cache</th><th>Likely Cause</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def error_reconciliation_tab():
+    mock_data_banner("Error Reconciliation")
+
+    st.markdown(
+        '<div class="page-title">Error Reconciliation — GSC vs Cloudflare vs Origin</div>'
+        '<div class="page-sub">Cross-references GSC-reported errors against '
+        "Cloudflare edge logs and origin server logs to find where things "
+        "actually break.</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="action-box">'
+        '<div class="label">How this will work</div>'
+        "<p>GSC reports an error but your server logs show 200? The problem "
+        "is likely at the Cloudflare edge — timeouts, Worker errors, or "
+        "WAF blocks. This report will reconcile all three sources to pinpoint "
+        "exactly where each error occurs: Origin → Cloudflare → "
+        "Googlebot.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="scorecards">'
+        '<div class="card"><div class="card-label">GSC Reported 5xx</div>'
+        '<div class="card-val" style="color:var(--red)">38</div></div>'
+        '<div class="card"><div class="card-label">CF Log 5xx</div>'
+        '<div class="card-val" style="color:var(--amber)">12</div></div>'
+        '<div class="card"><div class="card-label">Origin Log 5xx</div>'
+        '<div class="card-val" style="color:var(--green)">3</div></div>'
+        '<div class="card"><div class="card-label">Phantom Errors (GSC only)</div>'
+        '<div class="card-val" style="color:var(--amber)">26</div></div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="tbl-wrap" style="padding:20px;">'
+        '<div class="tbl-title" style="padding:0 0 12px;">Request Flow — '
+        "Where Errors Happen (example)</div>"
+        '<div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;">'
+        '<div class="flow-step"><div class="flow-title" style="color:var(--green)">Origin Server</div>'
+        '<div class="flow-sub">3 errors (8%)</div></div>'
+        '<div style="color:var(--text-dim);font-size:20px;">→</div>'
+        '<div class="flow-step"><div class="flow-title" style="color:var(--amber)">Cloudflare Edge</div>'
+        '<div class="flow-sub">9 errors (24%)</div></div>'
+        '<div style="color:var(--text-dim);font-size:20px;">→</div>'
+        '<div class="flow-step"><div class="flow-title" style="color:var(--red)">Googlebot Sees</div>'
+        '<div class="flow-sub">38 errors total</div></div>'
+        '<div style="color:var(--text-dim);font-size:20px;">→</div>'
+        '<div class="flow-step"><div class="flow-title" style="color:var(--accent)">26 Phantom Errors</div>'
+        '<div class="flow-sub">GSC only, no CF/origin match</div></div>'
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    example_errors = [
+        ("/example/calendar-page/", "500", "200", "200", "Phantom", "Monitor — likely transient edge timeout"),
+        ("/example/api-endpoint/", "500", "522", "200", "CF Edge", "CF 522 = connection timeout, increase origin timeout"),
+        ("/example/course-page/", "502", "502", "502", "Origin", "True origin error — fix at the source"),
+        ("/example/feed/", "500", "524", "200", "CF Edge", "CF 524 = origin took >100s"),
+    ]
+    rows = "".join(
+        f'<tr><td class="url">{html.escape(path)}</td>'
+        f'<td class="mono" style="color:var(--red)">{gsc}</td>'
+        f'<td class="mono">{cf}</td><td class="mono">{origin}</td>'
+        f'<td>{badge("High" if layer in ("Origin", "Phantom") else "Med")}</td>'
+        f'<td style="font-size:12px">{html.escape(note)}</td></tr>'
+        for path, gsc, cf, origin, layer, note in example_errors
+    )
+    st.markdown(
+        '<div class="tbl-wrap"><div class="tbl-title">URL-Level Error '
+        "Reconciliation — All Three Sources (example)</div>"
+        '<table class="report"><thead><tr><th>URL</th><th>GSC Status</th>'
+        "<th>CF Log Status</th><th>Origin Status</th><th>Layer</th>"
+        "<th>Action</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+
+
 def coming_soon_tab(name: str, note: str = ""):
     st.markdown(f'<div class="page-title">{html.escape(name)}</div>', unsafe_allow_html=True)
     st.markdown(
@@ -873,6 +1096,6 @@ with tabs[4]:
 with tabs[5]:
     page_performance_tab()
 with tabs[6]:
-    coming_soon_tab("Crawl Health", "Requires Cloudflare log integration (Phase 1.5).")
+    crawl_health_tab()
 with tabs[7]:
-    coming_soon_tab("Error Reconciliation", "Requires Cloudflare log integration (Phase 1.5).")
+    error_reconciliation_tab()
