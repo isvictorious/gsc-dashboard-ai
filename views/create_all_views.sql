@@ -109,6 +109,10 @@ filtered AS (
         AND LOWER(query) NOT LIKE '%deep dyve%'
         AND LOWER(query) NOT LIKE '%deepdive%'
         AND LOWER(query) NOT LIKE '%deepstore%'
+        AND LOWER(query) NOT LIKE '%deep dive%'
+        AND LOWER(query) NOT LIKE '%deepdybe%'
+        AND LOWER(query) NOT LIKE '%deepdvye%'
+        AND LOWER(query) NOT LIKE '%deepdy%'
 ),
 gap_detection AS (
     SELECT *,
@@ -214,6 +218,10 @@ WITH multi_url_queries AS (
         AND LOWER(query) NOT LIKE '%deepdive%'
         AND LOWER(query) NOT LIKE '%deepdye%'
         AND LOWER(query) NOT LIKE '%deepstore%'
+        AND LOWER(query) NOT LIKE '%deep dive%'
+        AND LOWER(query) NOT LIKE '%deepdybe%'
+        AND LOWER(query) NOT LIKE '%deepdvye%'
+        AND LOWER(query) NOT LIKE '%deepdy%'
     GROUP BY query
     HAVING COUNT(DISTINCT url) > 1 AND SUM(impressions) >= 200
 ),
@@ -256,6 +264,10 @@ WITH classified AS (
                 OR LOWER(query) LIKE '%deepdive%'
                 OR LOWER(query) LIKE '%deepdye%'
                 OR LOWER(query) LIKE '%deepstore%'
+                OR LOWER(query) LIKE '%deep dive%'
+                OR LOWER(query) LIKE '%deepdybe%'
+                OR LOWER(query) LIKE '%deepdvye%'
+                OR LOWER(query) LIKE '%deepdy%'
             THEN 'Brand'
             ELSE 'Non-Brand'
         END AS traffic_type

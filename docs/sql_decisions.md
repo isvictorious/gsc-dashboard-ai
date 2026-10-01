@@ -153,6 +153,14 @@ Use this as a learning reference — these are real decisions made against real 
 
 ---
 
+### Change: Add "deep dive", "deepdybe", "deepdvye", "deepdy" — fourth round of brand-term leaks
+**Original:** Matched deepdyve, deep dyve, deepdive, deepdye, deepstore.
+**Changed to:** Added four more LIKE conditions to the same chain, in every file that hardcodes this list (`queries/02_content_gaps.sql`, `queries/04_cannibalization.sql`, `queries/05_brand_vs_nonbrand.sql`, `views/create_all_views.sql`, and `streamlit_app/app.py`'s `load_top_queries_by_type`).
+**Why:** Found while building the Brand vs Non-Brand Streamlit tab's "Top Non-Brand Keywords" table — a new query (not an existing view) that exposes individual query strings directly, surfacing misspellings that aggregate-only views never showed. This is the third round of finding more brand-misspelling leaks in this general area (after `deepdive` and then `deepdye`/`deepstore`).
+**Note for later:** A hardcoded `LIKE '%term%'` list only catches typos someone already found by looking at data — it will never be complete, and every new variant requires a manual find-and-patch across 5 files. A more durable fix would be a single shared brand-matching function (e.g. BigQuery's `EDIT_DISTANCE`/Levenshtein distance against "deepdyve", flagging anything within distance 2-3 as brand) used everywhere instead of a duplicated literal list. Worth doing as a deliberate follow-up rather than continuing to patch one typo at a time.
+
+---
+
 ### Change: Remove DECLARE statement, hardcode brand terms in CASE WHEN
 **Original:** Used `DECLARE brand_terms ARRAY<STRING>` at the top of the query
 **Changed to:** Brand terms written directly in the CASE WHEN conditions

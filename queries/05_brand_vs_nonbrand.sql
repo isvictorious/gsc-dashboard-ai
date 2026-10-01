@@ -38,6 +38,10 @@ WITH classified AS (
                 OR LOWER(query) LIKE '%deepdive%'
                 OR LOWER(query) LIKE '%deepdye%'
                 OR LOWER(query) LIKE '%deepstore%'
+                OR LOWER(query) LIKE '%deep dive%'
+                OR LOWER(query) LIKE '%deepdybe%'
+                OR LOWER(query) LIKE '%deepdvye%'
+                OR LOWER(query) LIKE '%deepdy%'
             THEN 'Brand'
             ELSE 'Non-Brand'
         END AS traffic_type

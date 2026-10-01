@@ -48,6 +48,10 @@ WITH multi_url_queries AS (
         AND LOWER(query) NOT LIKE '%deepdive%'
         AND LOWER(query) NOT LIKE '%deepdye%'
         AND LOWER(query) NOT LIKE '%deepstore%'
+        AND LOWER(query) NOT LIKE '%deep dive%'
+        AND LOWER(query) NOT LIKE '%deepdybe%'
+        AND LOWER(query) NOT LIKE '%deepdvye%'
+        AND LOWER(query) NOT LIKE '%deepdy%'
     GROUP BY query
     HAVING
         COUNT(DISTINCT url) > 1
