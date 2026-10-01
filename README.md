@@ -1,6 +1,22 @@
 # GSC BigQuery Reports
 
-SQL queries, BigQuery views, and Looker Studio dashboards for actionable SEO intelligence from Google Search Console data.
+SQL queries, BigQuery views, and a Streamlit dashboard for actionable SEO
+intelligence from Google Search Console data.
+
+**Status: 6 of 8 reports live with real data.** Quick Wins, Content Gaps,
+CTR Optimization, Cannibalization, Brand vs Non-Brand, and Page Performance
+are all built, verified against live BigQuery data, and viewable in the
+Streamlit app. Crawl Health and Error Reconciliation show illustrative mock
+data behind a clear "not live" banner — they're blocked on Cloudflare log
+integration (Phase 1.5), not yet started. See
+[docs/phase1.5_cloudflare_setup.md](docs/phase1.5_cloudflare_setup.md).
+
+The dashboard originally targeted Looker Studio (see `docs/looker_setup.md`,
+kept for reference). It moved to a custom Streamlit app instead because the
+intended design — colored priority badges, SERP preview cards, a request-flow
+diagram, short-label hyperlinks — isn't achievable in Looker Studio's chart
+set. The underlying BigQuery views and SQL are identical either way; only the
+presentation layer changed.
 
 ---
 
@@ -53,16 +69,22 @@ A keyword with 10,000 impressions and 0 clicks at position 45 is not an opportun
 
 ## The 8 Reports
 
-| # | Report | What it answers |
-|---|--------|----------------|
-| 1 | Quick Wins | Which keywords am I almost ranking for? |
-| 2 | Content Gaps | Which keywords am I ranking for on the wrong page? |
-| 3 | CTR Optimization | Which pages have worse CTR than expected for their position? |
-| 4 | Cannibalization | Which keywords have multiple of my pages competing? |
-| 5 | Brand vs Non-Brand | How dependent am I on branded traffic? |
-| 6 | Page Performance | Which pages drive traffic, and which are dead weight? |
-| 7 | Crawl Health | How is Googlebot crawling my site? *(requires Cloudflare logs — [setup roadmap](docs/phase1.5_cloudflare_setup.md))* |
-| 8 | Error Reconciliation | Do my GSC errors reflect real server errors? *(requires Cloudflare logs — [setup roadmap](docs/phase1.5_cloudflare_setup.md))* |
+| # | Report | What it answers | Status |
+|---|--------|----------------|--------|
+| 1 | Quick Wins | Which keywords am I almost ranking for? | ✅ Live |
+| 2 | Content Gaps | Which keywords am I ranking for on the wrong page? | ✅ Live (currently empty — see note below) |
+| 3 | CTR Optimization | Which pages have worse CTR than expected for their position? | ✅ Live |
+| 4 | Cannibalization | Which keywords have multiple of my pages competing? | ✅ Live |
+| 5 | Brand vs Non-Brand | How dependent am I on branded traffic? | ✅ Live |
+| 6 | Page Performance | Which pages drive traffic, and which are dead weight? | ✅ Live |
+| 7 | Crawl Health | How is Googlebot crawling my site? | 🚧 Mock data — [setup roadmap](docs/phase1.5_cloudflare_setup.md) |
+| 8 | Error Reconciliation | Do my GSC errors reflect real server errors? | 🚧 Mock data — [setup roadmap](docs/phase1.5_cloudflare_setup.md) |
+
+**Content Gaps note:** this report currently returns 0 rows, which is
+expected, not broken. DeepDyve is a journal-catalog site with minimal
+blog/editorial content, so there's little of the "ranking for a keyword with
+no dedicated page for it" pattern this report looks for. See
+`docs/sql_decisions.md` (Query 02) for the full writeup.
 
 ---
 
@@ -76,7 +98,7 @@ BigQuery (daily export)                          ← Phase 1 (now)
 searchconsole.searchdata_url_impression
         │
         ▼
-BigQuery Views → Looker Studio (8-page dashboard)
+BigQuery Views → Streamlit dashboard (8-tab app, streamlit_app/app.py)
 
         +── Cloudflare Logpush → BigQuery        ← Phase 1.5
         │   Unlocks: Crawl Health, Error Reconciliation
@@ -98,10 +120,32 @@ pushes logs directly into BigQuery with no third-party log router required.
 
 ## Quick Start
 
-1. **Authenticate:** `gcloud auth login`
+**BigQuery / SQL side:**
+1. **Authenticate the CLI:** `gcloud auth login`
 2. **Test a query:** `bq query --use_legacy_sql=false < queries/01_quick_wins.sql`
 3. **Deploy all views:** `./scripts/deploy_views.sh`
-4. **Connect Looker:** See `docs/looker_setup.md`
+
+**Streamlit dashboard (local):**
+4. **Authenticate the Python client** (separate from step 1 — the `bq`/`gcloud`
+   CLI and the Python BigQuery client use different credential stores):
+   `gcloud auth application-default login`
+5. **Set up the environment** (first time only):
+   ```bash
+   python3 -m venv .venv
+   .venv/bin/pip install -r streamlit_app/requirements.txt
+   ```
+6. **Run it:**
+   ```bash
+   cd streamlit_app && ../.venv/bin/streamlit run app.py
+   ```
+   Opens at `http://localhost:8501`. If you hit a `RefreshError`/reauthentication
+   error after your gcloud token expires, redo step 4, then **restart the
+   Streamlit process** — it caches the BigQuery client in memory for the life
+   of the process, so a browser refresh alone won't pick up new credentials.
+
+**Deployment:** not yet live anywhere public — currently local-only. Planned
+path: Streamlit Community Cloud, with a dedicated service account (not
+personal credentials) stored as an encrypted app secret.
 
 ---
 
@@ -111,16 +155,35 @@ pushes logs directly into BigQuery with no third-party log router required.
 queries/          # Working SQL files — edit and test here
 views/            # BigQuery view definitions — deployed to BQ
 scripts/          # Deployment and setup scripts
-docs/             # Setup guides and Looker instructions
-config/           # Brand terms and project configuration
+docs/             # Setup guides: Looker (legacy), SQL decisions, Phase 1.5
+streamlit_app/    # The dashboard — app.py, requirements.txt, .streamlit/config.toml
+.venv/            # Local Python environment (gitignored, not committed)
 ```
 
 ---
 
 ## Update Workflow
 
+**SQL/data changes** (fixing or adding a report's logic):
 1. Edit query in `queries/`
 2. Test: `bq query --use_legacy_sql=false < queries/01_quick_wins.sql`
-3. Update corresponding view in `views/create_all_views.sql`
+3. Update the corresponding view block in `views/create_all_views.sql`
+   (these two must be kept in sync manually — the deploy script only runs
+   the `views/` file)
 4. Deploy: `./scripts/deploy_views.sh`
-5. Looker Studio auto-updates (views are live queries, not snapshots)
+5. Document the change in `docs/sql_decisions.md` (why, not just what —
+   this file is the project's running decision log)
+6. Restart the local Streamlit app (it caches query results for 24h via
+   `st.cache_data`, so a stale cache can mask whether a fix actually worked)
+
+**Branch/PR convention:** one PR per report tab, branched off `main`
+(`streamlit/quick-wins`, `streamlit/content-gaps`, etc. — mirrors the
+`phase1/*` branches used for the original SQL build). SQL fixes discovered
+while building a tab ship in that same PR, with before/after data verified
+against live BigQuery, not assumed.
+
+**Cost note:** BigQuery on-demand pricing is $6.25/TiB scanned with 1 TiB/
+month free. Every view already filters by `data_date` for partition
+pruning, so a typical query scans ~175MB (≈30 days of data), costing a
+fraction of a cent — thousands of dashboard views per month stay within the
+free tier.
