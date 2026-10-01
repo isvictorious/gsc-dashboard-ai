@@ -101,6 +101,14 @@ filtered AS (
         AND url_path NOT LIKE '/doc-view%'
         AND LENGTH(query) > 5
         AND query NOT LIKE '%.%'
+        -- Exclude journal catalog pages (ID-based URLs never contain topic
+        -- words, so the URL-match check always false-positives there)
+        AND url_path NOT LIKE '/browse/%'
+        -- Exclude brand/navigational queries
+        AND LOWER(query) NOT LIKE '%deepdyve%'
+        AND LOWER(query) NOT LIKE '%deep dyve%'
+        AND LOWER(query) NOT LIKE '%deepdive%'
+        AND LOWER(query) NOT LIKE '%deepstore%'
 ),
 gap_detection AS (
     SELECT *,
