@@ -79,6 +79,10 @@ filtered AS (
         AND LOWER(query) NOT LIKE '%deep dyve%'
         AND LOWER(query) NOT LIKE '%deepdive%'
         AND LOWER(query) NOT LIKE '%deepstore%'
+        AND LOWER(query) NOT LIKE '%deep dive%'
+        AND LOWER(query) NOT LIKE '%deepdybe%'
+        AND LOWER(query) NOT LIKE '%deepdvye%'
+        AND LOWER(query) NOT LIKE '%deepdy%'
 ),
 
 gap_detection AS (

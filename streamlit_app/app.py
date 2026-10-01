@@ -128,6 +128,64 @@ def load_cannibalization() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
+def load_brand_vs_nonbrand() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"SELECT * FROM `{PROJECT}.{DATASET}.v_brand_vs_nonbrand`"
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
+def load_top_queries_by_type() -> pd.DataFrame:
+    """Top 10 queries per traffic_type by clicks, same brand-term list as
+    v_brand_vs_nonbrand (kept in sync manually - see docs/sql_decisions.md)."""
+    client = get_bq_client()
+    query = f"""
+        WITH classified AS (
+            SELECT
+                query, clicks, impressions, sum_position,
+                CASE
+                    WHEN LOWER(query) LIKE '%deepdyve%'
+                        OR LOWER(query) LIKE '%deep dyve%'
+                        OR LOWER(query) LIKE '%deepdive%'
+                        OR LOWER(query) LIKE '%deepdye%'
+                        OR LOWER(query) LIKE '%deepstore%'
+                        OR LOWER(query) LIKE '%deep dive%'
+                        OR LOWER(query) LIKE '%deepdybe%'
+                        OR LOWER(query) LIKE '%deepdvye%'
+                        OR LOWER(query) LIKE '%deepdy%'
+                    THEN 'Brand'
+                    ELSE 'Non-Brand'
+                END AS traffic_type
+            FROM `{PROJECT}.{DATASET}.searchdata_url_impression`
+            WHERE query IS NOT NULL
+                AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+                -- Same noise filters as every other view: /lp/ and /doc-view/
+                -- pages are individual paper landing pages where academic
+                -- terminology collides with unrelated queries (adult content,
+                -- foreign-language media titles, etc.)
+                AND url NOT LIKE '%/lp/%'
+                AND url NOT LIKE '%/doc-view%'
+                AND LENGTH(query) > 5
+                AND query NOT LIKE '%.%'
+        ),
+        agg AS (
+            SELECT
+                traffic_type, query,
+                SUM(clicks) AS clicks,
+                SUM(impressions) AS impressions,
+                ROUND((SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1, 1) AS avg_position
+            FROM classified
+            GROUP BY traffic_type, query
+        )
+        SELECT * FROM agg
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY traffic_type ORDER BY clicks DESC) <= 10
+        ORDER BY traffic_type, clicks DESC
+    """
+    return client.query(query).to_dataframe()
+
+
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
 def load_top3_avg_ctr() -> float:
     """Real site-wide average CTR for pages ranking position 1-3, last 30 days.
     Same bucket-average technique used in v_ctr_optimization."""
@@ -535,6 +593,115 @@ def cannibalization_tab():
     )
 
 
+def render_keyword_table(df: pd.DataFrame) -> str:
+    rows = []
+    for _, r in df.iterrows():
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(r['query'])}</td>"
+            f"<td class=\"mono\">{int(r['clicks']):,}</td>"
+            f"<td class=\"mono\">{int(r['impressions']):,}</td>"
+            f"<td class=\"mono\">{r['avg_position']}</td>"
+            "</tr>"
+        )
+    return (
+        '<table class="report">'
+        "<thead><tr><th>Keyword</th><th>Clicks</th><th>Impressions</th>"
+        "<th>Position</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def brand_vs_nonbrand_tab():
+    try:
+        df = load_brand_vs_nonbrand()
+    except Exception as e:  # noqa: BLE001
+        st.error(
+            "Couldn't reach BigQuery. If this is your first time running the app "
+            "locally, run `gcloud auth application-default login` in your terminal, "
+            "then restart Streamlit."
+        )
+        st.exception(e)
+        return
+
+    st.markdown(
+        '<div class="page-title">Brand vs Non-Brand Breakdown</div>'
+        '<div class="page-sub">How much of your traffic comes from people '
+        "already looking for you vs. organic discovery, over the last 90 days.</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="action-box">'
+        '<div class="label">How to action this</div>'
+        "<p>A healthy SEO program has growing non-brand traffic — that "
+        "means new people are finding you through content, not just "
+        "searching your name. If brand traffic dominates, your content "
+        "strategy isn't reaching new audiences yet. Track this ratio over "
+        "time rather than as a single snapshot.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if df.empty:
+        st.markdown(
+            '<div class="empty-state">'
+            '<div class="empty-title">No data in the last 90 days</div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    totals = df.groupby("traffic_type")[["total_clicks", "total_impressions"]].sum()
+    brand_clicks = int(totals.loc["Brand", "total_clicks"]) if "Brand" in totals.index else 0
+    nonbrand_clicks = int(totals.loc["Non-Brand", "total_clicks"]) if "Non-Brand" in totals.index else 0
+    brand_impr = int(totals.loc["Brand", "total_impressions"]) if "Brand" in totals.index else 0
+    nonbrand_impr = int(totals.loc["Non-Brand", "total_impressions"]) if "Non-Brand" in totals.index else 0
+    total_clicks = brand_clicks + nonbrand_clicks
+    total_impr = brand_impr + nonbrand_impr
+    nonbrand_click_pct = round(100 * nonbrand_clicks / total_clicks, 1) if total_clicks else 0
+    nonbrand_impr_pct = round(100 * nonbrand_impr / total_impr, 1) if total_impr else 0
+
+    st.markdown(
+        '<div class="scorecards">'
+        f'<div class="card"><div class="card-label">Non-Brand Click Share</div>'
+        f'<div class="card-val" style="color:var(--accent)">{nonbrand_click_pct}%</div></div>'
+        f'<div class="card"><div class="card-label">Non-Brand Impression Share</div>'
+        f'<div class="card-val" style="color:var(--accent)">{nonbrand_impr_pct}%</div></div>'
+        f'<div class="card"><div class="card-label">Total Clicks (90d)</div>'
+        f'<div class="card-val">{total_clicks:,}</div></div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="tbl-wrap" style="padding:16px;">'
+                '<div class="tbl-title" style="padding:0 0 12px;">Daily Click Trend</div>',
+                unsafe_allow_html=True)
+    pivot = df.pivot_table(index="data_date", columns="traffic_type", values="total_clicks", fill_value=0)
+    st.line_chart(pivot, height=260)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    try:
+        top_queries = load_top_queries_by_type()
+        brand_top = top_queries[top_queries["traffic_type"] == "Brand"]
+        nonbrand_top = top_queries[top_queries["traffic_type"] == "Non-Brand"]
+
+        st.markdown(
+            '<div class="tbl-wrap"><div class="tbl-title">Top Brand Keywords</div>'
+            f"{render_keyword_table(brand_top)}</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="tbl-wrap"><div class="tbl-title">Top Non-Brand Keywords '
+            "(Organic Discovery)</div>"
+            f"{render_keyword_table(nonbrand_top)}</div>",
+            unsafe_allow_html=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        st.warning("Couldn't load top keywords breakdown.")
+        st.exception(e)
+
+
 def coming_soon_tab(name: str, note: str = ""):
     st.markdown(f'<div class="page-title">{html.escape(name)}</div>', unsafe_allow_html=True)
     st.markdown(
@@ -555,7 +722,7 @@ with tabs[2]:
 with tabs[3]:
     cannibalization_tab()
 with tabs[4]:
-    coming_soon_tab("Brand vs Non-Brand")
+    brand_vs_nonbrand_tab()
 with tabs[5]:
     coming_soon_tab("Page Performance")
 with tabs[6]:
