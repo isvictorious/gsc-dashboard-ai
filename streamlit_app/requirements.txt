@@ -2,3 +2,9 @@ streamlit==1.50.0
 google-cloud-bigquery==3.41.0
 pandas==2.3.3
 db-dtypes==1.6.0
+# altair 5.5.0 (streamlit's declared default) fails on Python 3.14 with
+# TypeError: _TypedDictMeta.__new__() got an unexpected keyword argument
+# 'closed' - that's a Python 3.14 typing change altair 5.x doesn't support.
+# Pinning 6.3.0, which streamlit's own range check flags as "incompatible"
+# but which st.line_chart verified works fine against.
+altair==6.3.0
