@@ -1027,6 +1027,30 @@ def error_reconciliation_tab():
         unsafe_allow_html=True,
     )
 
+    error_timeline = pd.DataFrame(
+        {
+            "date": pd.date_range(end=pd.Timestamp.today().normalize(), periods=30, freq="D"),
+            "GSC Reported": [6,7,5,8,6,7,6,5,7,6, 18,22,20,17,19, 14,12,11,9,8,7,6,5,5,4,4,3,3,3,3],
+            "CF Confirmed": [5,6,4,6,5,6,5,4,6,5, 13,15,14,12,13, 3,2,3,2,2,2,1,2,1,1,2,1,1,1,1],
+            "Origin Confirmed": [1,1,0,1,1,1,0,1,1,1, 2,2,1,2,2, 1,1,0,1,1,0,1,0,1,0,1,0,1,0,0],
+        }
+    ).set_index("date")
+
+    st.markdown(
+        '<div class="tbl-wrap" style="padding:16px;">'
+        '<div class="tbl-title" style="padding:0 0 4px;">Error Volume Over '
+        "Time (example)</div>"
+        '<div class="page-sub" style="margin-bottom:12px;">Illustrates why '
+        "this report needs a timeline, not just a snapshot: an edge issue "
+        "spikes around day 11, gets fixed by day 16 (CF and Origin drop "
+        "immediately), but GSC keeps reporting elevated errors for another "
+        "week or more — that lingering gap is the “phantom error” "
+        "lag, not a sign the fix didn't work.</div>",
+        unsafe_allow_html=True,
+    )
+    st.line_chart(error_timeline, height=260, color=["#f87171", "#fbbf24", "#34d399"])
+    st.markdown("</div>", unsafe_allow_html=True)
+
     st.markdown(
         '<div class="tbl-wrap" style="padding:20px;">'
         '<div class="tbl-title" style="padding:0 0 12px;">Request Flow — '
