@@ -186,6 +186,47 @@ def load_top_queries_by_type() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
+def load_page_performance() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"SELECT * FROM `{PROJECT}.{DATASET}.v_page_performance`"
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
+def load_page_performance_stats() -> dict:
+    """Site-wide page counts, not limited to the view's top-25/zombie-25 cutoff."""
+    client = get_bq_client()
+    query = f"""
+        WITH base AS (
+            SELECT url, SUM(clicks) AS clicks, SUM(impressions) AS impressions
+            FROM `{PROJECT}.{DATASET}.searchdata_url_impression`
+            WHERE query IS NOT NULL
+                AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+                AND url NOT LIKE '%/lp/%' AND url NOT LIKE '%/doc-view%'
+            GROUP BY url
+        ),
+        ranked AS (
+            SELECT clicks, ROW_NUMBER() OVER (ORDER BY clicks DESC) AS rn,
+                SUM(clicks) OVER () AS total_clicks
+            FROM base
+        )
+        SELECT
+            (SELECT COUNT(*) FROM base) AS total_pages,
+            (SELECT COUNTIF(clicks > 0) FROM base) AS pages_with_clicks,
+            (SELECT COUNTIF(clicks = 0 AND impressions >= 200) FROM base) AS real_zombies,
+            (SELECT ROUND(100 * SUM(IF(rn <= 10, clicks, 0)) / ANY_VALUE(total_clicks), 1) FROM ranked) AS top10_pct
+    """
+    row = client.query(query).to_dataframe().iloc[0]
+    return {
+        "total_pages": int(row["total_pages"]),
+        "pages_with_clicks": int(row["pages_with_clicks"]),
+        "real_zombies": int(row["real_zombies"]),
+        "top10_pct": float(row["top10_pct"]),
+    }
+
+
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
 def load_top3_avg_ctr() -> float:
     """Real site-wide average CTR for pages ranking position 1-3, last 30 days.
     Same bucket-average technique used in v_ctr_optimization."""
@@ -702,6 +743,112 @@ def brand_vs_nonbrand_tab():
         st.exception(e)
 
 
+def render_page_performance_table(df: pd.DataFrame) -> str:
+    rows = []
+    for _, r in df.iterrows():
+        full_url = html.escape(r["url"])
+        path = html.escape(r["url_path"] or "/")
+        rows.append(
+            "<tr>"
+            f'<td class="url"><a href="{full_url}" target="_blank">{path}</a></td>'
+            f"<td class=\"mono\">{int(r['clicks']):,}</td>"
+            f"<td class=\"mono\">{int(r['impressions']):,}</td>"
+            f"<td class=\"mono\">{r['ctr_percent']}%</td>"
+            f"<td class=\"mono\">{r['avg_position']}</td>"
+            f"<td class=\"mono\">{int(r['ranking_keywords']):,}</td>"
+            "</tr>"
+        )
+    return (
+        '<table class="report">'
+        "<thead><tr><th>Page</th><th>Clicks</th><th>Impressions</th>"
+        "<th>CTR</th><th>Avg Position</th><th>Ranking Keywords</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def page_performance_tab():
+    try:
+        df = load_page_performance()
+    except Exception as e:  # noqa: BLE001
+        st.error(
+            "Couldn't reach BigQuery. If this is your first time running the app "
+            "locally, run `gcloud auth application-default login` in your terminal, "
+            "then restart Streamlit."
+        )
+        st.exception(e)
+        return
+
+    st.markdown(
+        '<div class="page-title">Page-Level Performance</div>'
+        '<div class="page-sub">Your top pages driving traffic, and the pages '
+        "wasting search visibility with zero clicks.</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="action-box">'
+        '<div class="label">How to action this</div>'
+        "<p>Your top pages drive the large majority of organic traffic — "
+        "protect them: keep content fresh, maintain internal links, watch for "
+        "position drops. Zombie pages (real search visibility, zero clicks) "
+        "need a title/description rewrite, or consideration for noindex if "
+        "they're not worth optimizing.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    try:
+        stats = load_page_performance_stats()
+        st.markdown(
+            '<div class="scorecards">'
+            f'<div class="card"><div class="card-label">Total Pages Indexed</div>'
+            f'<div class="card-val">{stats["total_pages"]:,}</div></div>'
+            f'<div class="card"><div class="card-label">Pages w/ Clicks</div>'
+            f'<div class="card-val" style="color:var(--green)">{stats["pages_with_clicks"]:,}</div></div>'
+            f'<div class="card"><div class="card-label">Meaningful Zombie Pages</div>'
+            f'<div class="card-val" style="color:var(--red)">{stats["real_zombies"]:,}</div></div>'
+            f'<div class="card"><div class="card-label">Top 10 Pages = % of Clicks</div>'
+            f'<div class="card-val">{stats["top10_pct"]}%</div></div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f'Of {stats["total_pages"]:,} indexed pages, only {stats["pages_with_clicks"]} '
+            "ever get clicked — the rest is normal long-tail catalog noise "
+            "(a handful of stray impressions each), except for the "
+            f'{stats["real_zombies"]} flagged below with real visibility (200+ '
+            "impressions) and zero clicks."
+        )
+    except Exception:
+        pass
+
+    if df.empty:
+        st.markdown(
+            '<div class="empty-state">'
+            '<div class="empty-title">No page performance data right now</div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    top_performers = df[df["page_category"] == "Top Performer"].sort_values("clicks", ascending=False)
+    zombies = df[df["page_category"] == "Zombie Page"].sort_values("impressions", ascending=False)
+
+    st.markdown(
+        '<div class="tbl-wrap"><div class="tbl-title">Top Pages by Clicks</div>'
+        f"{render_page_performance_table(top_performers)}</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not zombies.empty:
+        st.markdown(
+            '<div class="tbl-wrap"><div class="tbl-title" style="color:var(--red)">'
+            "⚠️ High Impressions, Zero Clicks — Investigate These</div>"
+            f"{render_page_performance_table(zombies)}</div>",
+            unsafe_allow_html=True,
+        )
+
+
 def coming_soon_tab(name: str, note: str = ""):
     st.markdown(f'<div class="page-title">{html.escape(name)}</div>', unsafe_allow_html=True)
     st.markdown(
@@ -724,7 +871,7 @@ with tabs[3]:
 with tabs[4]:
     brand_vs_nonbrand_tab()
 with tabs[5]:
-    coming_soon_tab("Page Performance")
+    page_performance_tab()
 with tabs[6]:
     coming_soon_tab("Crawl Health", "Requires Cloudflare log integration (Phase 1.5).")
 with tabs[7]:
