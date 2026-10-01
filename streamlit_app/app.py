@@ -112,6 +112,14 @@ def load_content_gaps() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
+def load_ctr_optimization() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"SELECT * FROM `{PROJECT}.{DATASET}.v_ctr_optimization`"
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
 def load_top3_avg_ctr() -> float:
     """Real site-wide average CTR for pages ranking position 1-3, last 30 days.
     Same bucket-average technique used in v_ctr_optimization."""
@@ -329,6 +337,99 @@ def content_gaps_tab():
     )
 
 
+def render_ctr_table(df: pd.DataFrame) -> str:
+    rows = []
+    for _, r in df.iterrows():
+        full_url = html.escape(r["url"])
+        path = html.escape(r["url_path"] or "/")
+        rows.append(
+            "<tr>"
+            f"<td>{badge(r['priority'])}</td>"
+            f'<td class="url"><a href="{full_url}" target="_blank">{path}</a></td>'
+            f"<td class=\"mono\">{r['avg_position']}</td>"
+            f"<td class=\"mono\">{html.escape(r['position_bucket'])}</td>"
+            f"<td class=\"mono\">{int(r['impressions']):,}</td>"
+            f"<td class=\"mono\">{r['actual_ctr_percent']}%</td>"
+            f"<td class=\"mono\">{r['expected_ctr_percent']}%</td>"
+            f"<td class=\"mono\" style=\"color:var(--red)\">{int(r['missed_clicks']):,}</td>"
+            "</tr>"
+        )
+    return (
+        '<table class="report">'
+        "<thead><tr><th>Priority</th><th>Page</th><th>Position</th>"
+        "<th>Bucket</th><th>Impressions</th><th>Actual CTR</th>"
+        "<th>Expected CTR</th><th>Missed Clicks</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def ctr_optimization_tab():
+    try:
+        df = load_ctr_optimization()
+    except Exception as e:  # noqa: BLE001
+        st.error(
+            "Couldn't reach BigQuery. If this is your first time running the app "
+            "locally, run `gcloud auth application-default login` in your terminal, "
+            "then restart Streamlit."
+        )
+        st.exception(e)
+        return
+
+    st.markdown(
+        '<div class="page-title">CTR Optimization — Fix Your Titles & Descriptions</div>'
+        '<div class="page-sub">Pages ranking well but earning fewer clicks than '
+        "expected for their position.</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="action-box">'
+        '<div class="label">How to action this</div>'
+        "<p>Missed clicks = (DeepDyve's own average CTR for pages at this "
+        "position range − this page's actual CTR) × impressions — "
+        "a real, site-specific benchmark, not an industry guess. These pages "
+        "are already getting seen; the fix is almost always the title tag or "
+        "meta description, not the ranking itself. High priority = 50+ "
+        "estimated missed clicks/month, Med = 20–49, Low = under 20.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if df.empty:
+        st.markdown(
+            '<div class="empty-state">'
+            '<div class="empty-title">No CTR gaps found right now</div>'
+            "<p>Every page is earning clicks at or above the expected rate "
+            "for its position — nothing to flag.</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    pages_below_avg = len(df)
+    total_missed_clicks = int(df["missed_clicks"].sum())
+    high_priority = int((df["priority"] == "High").sum())
+
+    st.markdown(
+        '<div class="scorecards">'
+        f'<div class="card"><div class="card-label">Pages Below Avg CTR</div>'
+        f'<div class="card-val">{pages_below_avg}</div></div>'
+        f'<div class="card"><div class="card-label">Est. Total Missed Clicks</div>'
+        f'<div class="card-val" style="color:var(--red)">{total_missed_clicks:,}</div></div>'
+        f'<div class="card"><div class="card-label">High Priority Pages</div>'
+        f'<div class="card-val" style="color:var(--red)">{high_priority}</div></div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="tbl-wrap"><div class="tbl-title">'
+        f"All {pages_below_avg} Pages to Rewrite — Sorted by Missed Clicks</div>"
+        f"{render_ctr_table(df)}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def coming_soon_tab(name: str, note: str = ""):
     st.markdown(f'<div class="page-title">{html.escape(name)}</div>', unsafe_allow_html=True)
     st.markdown(
@@ -345,7 +446,7 @@ with tabs[0]:
 with tabs[1]:
     content_gaps_tab()
 with tabs[2]:
-    coming_soon_tab("CTR Optimization")
+    ctr_optimization_tab()
 with tabs[3]:
     coming_soon_tab("Cannibalization")
 with tabs[4]:
