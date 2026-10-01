@@ -61,8 +61,8 @@ A keyword with 10,000 impressions and 0 clicks at position 45 is not an opportun
 | 4 | Cannibalization | Which keywords have multiple of my pages competing? |
 | 5 | Brand vs Non-Brand | How dependent am I on branded traffic? |
 | 6 | Page Performance | Which pages drive traffic, and which are dead weight? |
-| 7 | Crawl Health | How is Googlebot crawling my site? *(requires Cloudflare logs)* |
-| 8 | Error Reconciliation | Do my GSC errors reflect real server errors? *(requires Cloudflare logs)* |
+| 7 | Crawl Health | How is Googlebot crawling my site? *(requires Cloudflare logs — [setup roadmap](docs/phase1.5_cloudflare_setup.md))* |
+| 8 | Error Reconciliation | Do my GSC errors reflect real server errors? *(requires Cloudflare logs — [setup roadmap](docs/phase1.5_cloudflare_setup.md))* |
 
 ---
 
@@ -78,14 +78,21 @@ searchconsole.searchdata_url_impression
         ▼
 BigQuery Views → Looker Studio (8-page dashboard)
 
-        +── Cloudflare → Logflare → BigQuery     ← Phase 1.5
+        +── Cloudflare Logpush → BigQuery        ← Phase 1.5
         │   Unlocks: Crawl Health, Error Reconciliation
+        │   Setup roadmap: docs/phase1.5_cloudflare_setup.md
         │
         +── Screaming Frog → Cloud VM → BigQuery ← Phase 2
         │   Unlocks: page metadata (title, H1, word count)
         │
         └── WordPress MCP → automated fixes      ← Phase 3
 ```
+
+**Phase 1.5 status:** not started. Reports 7-8 currently show illustrative
+mock data behind a clear "not live" banner, not real numbers. See
+[docs/phase1.5_cloudflare_setup.md](docs/phase1.5_cloudflare_setup.md) for
+exactly what's needed — it's simpler than it used to be: Cloudflare now
+pushes logs directly into BigQuery with no third-party log router required.
 
 ---
 
