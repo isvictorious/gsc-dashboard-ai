@@ -16,7 +16,9 @@ Required to diagnose why GSC traffic is lower than expected — crawl issues
 and server errors are invisible without server-side log data.
 
 Pipeline:
-  Cloudflare → Logflare → BigQuery (cloudflare_logs table)
+  Cloudflare Logpush → BigQuery (cloudflare_logs table), via Cloudflare's
+  native BigQuery Logpush destination — no third-party log router needed.
+  See docs/phase1.5_cloudflare_setup.md for the verified setup steps.
 
 Optional for other projects: any CDN with log export capability works.
 Cloudflare is the reference implementation.
@@ -58,9 +60,9 @@ bq ls deepdyve-491623:searchconsole
 ```
 GSC → BigQuery (daily export)
                     ↓
-          BigQuery Views → Looker Studio (Phase 1: 8 reports)
+     BigQuery Views → Streamlit dashboard (Phase 1: 8 reports)
                     ↓
-Cloudflare → Logflare → BigQuery (Phase 1.5: crawl + error reports)
+Cloudflare Logpush → BigQuery (Phase 1.5: crawl + error reports)
                     ↓
 Screaming Frog → Cloud VM → BigQuery (Phase 2: page metadata)
                     ↓
