@@ -11,9 +11,11 @@
 --   Healthy ratio varies by business; track the trend over time
 --
 -- Brand terms for DeepDyve (update if brand name changes):
---   "deepdyve"  — standard spelling
---   "deep dyve" — two-word variant
---   "deepdive"  — common misspelling (seen in real GSC data)
+--   "deepdyve"   — standard spelling
+--   "deep dyve"  — two-word variant
+--   "deepdive"   — common misspelling (seen in real GSC data)
+--   "deepdye"    — common misspelling (seen in real GSC data)
+--   "deepstore"  — common misspelling (seen in real GSC data)
 --
 -- NOTE: DECLARE variables cannot be used in BigQuery views.
 -- Brand terms are hardcoded directly in the CASE WHEN.
@@ -34,6 +36,8 @@ WITH classified AS (
             WHEN LOWER(query) LIKE '%deepdyve%'
                 OR LOWER(query) LIKE '%deep dyve%'
                 OR LOWER(query) LIKE '%deepdive%'
+                OR LOWER(query) LIKE '%deepdye%'
+                OR LOWER(query) LIKE '%deepstore%'
             THEN 'Brand'
             ELSE 'Non-Brand'
         END AS traffic_type

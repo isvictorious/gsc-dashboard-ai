@@ -120,6 +120,14 @@ def load_ctr_optimization() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
+def load_cannibalization() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"SELECT * FROM `{PROJECT}.{DATASET}.v_cannibalization`"
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
 def load_top3_avg_ctr() -> float:
     """Real site-wide average CTR for pages ranking position 1-3, last 30 days.
     Same bucket-average technique used in v_ctr_optimization."""
@@ -430,6 +438,103 @@ def ctr_optimization_tab():
     )
 
 
+def render_cannibalization_table(df: pd.DataFrame) -> str:
+    rows = []
+    # One row per query, listing every competing URL inside it
+    for query, group in df.groupby("query", sort=False):
+        group = group.sort_values("impressions", ascending=False)
+        first = group.iloc[0]
+        urls_html = "".join(
+            f'<div style="margin-bottom:2px"><a href="{html.escape(r["url"])}" '
+            f'target="_blank" style="color:var(--accent)">{html.escape(r["url_path"] or "/")}</a> '
+            f'<span class="mono" style="color:var(--text-dim)">(pos {r["avg_position"]}, '
+            f'{int(r["impressions"]):,} impr.)</span></div>'
+            for _, r in group.iterrows()
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{badge(first['priority'])}</td>"
+            f"<td>{html.escape(query)}</td>"
+            f'<td style="font-size:12px">{urls_html}</td>'
+            f"<td class=\"mono\">{int(group['impressions'].sum()):,}</td>"
+            f"<td class=\"mono\">{first['severity_score']}</td>"
+            "</tr>"
+        )
+    return (
+        '<table class="report">'
+        "<thead><tr><th>Priority</th><th>Keyword</th><th>Competing Pages</th>"
+        "<th>Combined Impressions</th><th>Severity</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def cannibalization_tab():
+    try:
+        df = load_cannibalization()
+    except Exception as e:  # noqa: BLE001
+        st.error(
+            "Couldn't reach BigQuery. If this is your first time running the app "
+            "locally, run `gcloud auth application-default login` in your terminal, "
+            "then restart Streamlit."
+        )
+        st.exception(e)
+        return
+
+    st.markdown(
+        '<div class="page-title">Keyword Cannibalization — Internal Competition</div>'
+        '<div class="page-sub">Keywords where multiple DeepDyve pages compete '
+        "against each other in Google.</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="action-box">'
+        '<div class="label">How to action this</div>'
+        "<p>When two of your pages rank for the same keyword, Google splits "
+        "ranking signals between them and neither performs as well as one "
+        "consolidated page would. Fix by merging content into the stronger "
+        "page (redirect the weaker one), or clearly differentiate what each "
+        "page targets. Brand/navigational searches are excluded — those "
+        "naturally hit multiple pages and aren't a real problem.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if df.empty:
+        st.markdown(
+            '<div class="empty-state">'
+            '<div class="empty-title">No cannibalization issues found</div>'
+            "<p>No non-brand keyword currently has multiple DeepDyve pages "
+            "competing for it with meaningful volume.</p>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    cannibalized_keywords = df["query"].nunique()
+    pages_affected = df["url"].nunique()
+    total_impressions = int(df["impressions"].sum())
+
+    st.markdown(
+        '<div class="scorecards">'
+        f'<div class="card"><div class="card-label">Cannibalized Keywords</div>'
+        f'<div class="card-val" style="color:var(--red)">{cannibalized_keywords}</div></div>'
+        f'<div class="card"><div class="card-label">Pages Affected</div>'
+        f'<div class="card-val">{pages_affected}</div></div>'
+        f'<div class="card"><div class="card-label">Impressions at Risk</div>'
+        f'<div class="card-val">{total_impressions:,}</div></div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="tbl-wrap"><div class="tbl-title">'
+        f"{cannibalized_keywords} Keywords with Multiple Ranking URLs</div>"
+        f"{render_cannibalization_table(df)}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def coming_soon_tab(name: str, note: str = ""):
     st.markdown(f'<div class="page-title">{html.escape(name)}</div>', unsafe_allow_html=True)
     st.markdown(
@@ -448,7 +553,7 @@ with tabs[1]:
 with tabs[2]:
     ctr_optimization_tab()
 with tabs[3]:
-    coming_soon_tab("Cannibalization")
+    cannibalization_tab()
 with tabs[4]:
     coming_soon_tab("Brand vs Non-Brand")
 with tabs[5]:

@@ -211,6 +211,9 @@ WITH multi_url_queries AS (
         AND LENGTH(query) > 5 AND query NOT LIKE '%.%'
         AND LOWER(query) NOT LIKE '%deepdyve%'
         AND LOWER(query) NOT LIKE '%deep dyve%'
+        AND LOWER(query) NOT LIKE '%deepdive%'
+        AND LOWER(query) NOT LIKE '%deepdye%'
+        AND LOWER(query) NOT LIKE '%deepstore%'
     GROUP BY query
     HAVING COUNT(DISTINCT url) > 1 AND SUM(impressions) >= 200
 ),
@@ -240,7 +243,7 @@ ORDER BY severity_score DESC, query, impressions DESC;
 -- ============================================================================
 -- View 5: Brand vs Non-Brand
 -- Daily traffic split — use as a time series chart in Looker
--- Brand terms: deepdyve, deep dyve, deepdive (common misspelling)
+-- Brand terms: deepdyve, deep dyve, deepdive, deepdye, deepstore (misspellings)
 -- To update brand terms: edit this view and queries/05_brand_vs_nonbrand.sql
 -- ============================================================================
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_brand_vs_nonbrand` AS
@@ -251,6 +254,8 @@ WITH classified AS (
             WHEN LOWER(query) LIKE '%deepdyve%'
                 OR LOWER(query) LIKE '%deep dyve%'
                 OR LOWER(query) LIKE '%deepdive%'
+                OR LOWER(query) LIKE '%deepdye%'
+                OR LOWER(query) LIKE '%deepstore%'
             THEN 'Brand'
             ELSE 'Non-Brand'
         END AS traffic_type
