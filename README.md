@@ -67,7 +67,7 @@ A keyword with 10,000 impressions and 0 clicks at position 45 is not an opportun
 
 ---
 
-## The 8 Reports
+## The Reports
 
 | # | Report | What it answers | Status |
 |---|--------|----------------|--------|
@@ -79,12 +79,27 @@ A keyword with 10,000 impressions and 0 clicks at position 45 is not an opportun
 | 6 | Page Performance | Which pages drive traffic, and which are dead weight? | ✅ Live |
 | 7 | Crawl Health | How is Googlebot crawling my site? | 🚧 Mock data — [setup roadmap](docs/phase1.5_cloudflare_setup.md) |
 | 8 | Error Reconciliation | Do my GSC errors reflect real server errors? | 🚧 Mock data — [setup roadmap](docs/phase1.5_cloudflare_setup.md) |
+| 9 | Article Visibility | Are our articles (`/lp/`) actually ranking for relevant queries? | 📋 Planned, not yet built |
 
 **Content Gaps note:** this report currently returns 0 rows, which is
 expected, not broken. DeepDyve is a journal-catalog site with minimal
 blog/editorial content, so there's little of the "ranking for a keyword with
 no dedicated page for it" pattern this report looks for. See
 `docs/sql_decisions.md` (Query 02) for the full writeup.
+
+**Article Visibility note:** reports 1-8 all deliberately exclude `/lp/`
+(article) pages to avoid academic-title noise — see "Understanding Your
+Impressions Data" above. That means none of them can show whether articles
+are actually ranking, which the client specifically asked about. Initial
+investigation (2026-10-01): articles get real visibility (9,688 distinct
+pages, 259K impressions, 5,225 clicks in 30 days, 81% already top-10), but
+most of that volume is the same noise pattern — and the standard length/dot
+filters don't catch it here, since terms like "xxxxsex" are long enough and
+dot-free to pass. Real signal exists once noise terms are excluded (e.g. a
+case-study paper ranking for 6+ real variations of its own subject). Full
+signal/noise separation needs Phase 2's page title data; this report will
+ship as best-effort/noise-filtered before that lands. See `CLAUDE.md` for
+the full writeup.
 
 ---
 
