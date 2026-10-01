@@ -9,9 +9,9 @@
 -- Solution: Consolidate content, add canonical tags, or differentiate targeting
 --
 -- Filters applied:
---   - Exclude brand queries (deepdyve, deep dyve) — brand searches naturally
---     hit multiple pages (homepage, login, pricing) and that's expected behavior,
---     not a cannibalization problem worth fixing
+--   - Exclude brand queries (deepdyve, deep dyve, deepdive, deepdye, deepstore)
+--     — brand searches naturally hit multiple pages (homepage, login, pricing)
+--     and that's expected behavior, not a cannibalization problem worth fixing
 --   - Exclude individual paper pages (/lp/, /doc-view) — same noise filter
 --   - Minimum 200 impressions — focus on queries with real volume
 --   - Query length > 5 chars, no dots — same noise filters as other reports
@@ -45,6 +45,9 @@ WITH multi_url_queries AS (
         -- Exclude brand queries — brand searches hitting multiple pages is expected
         AND LOWER(query) NOT LIKE '%deepdyve%'
         AND LOWER(query) NOT LIKE '%deep dyve%'
+        AND LOWER(query) NOT LIKE '%deepdive%'
+        AND LOWER(query) NOT LIKE '%deepdye%'
+        AND LOWER(query) NOT LIKE '%deepstore%'
     GROUP BY query
     HAVING
         COUNT(DISTINCT url) > 1

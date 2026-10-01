@@ -127,6 +127,14 @@ Use this as a learning reference — these are real decisions made against real 
 
 ---
 
+### Change: Add deepdive, deepdye, deepstore to the brand exclusion list
+**Original:** Only excluded `deepdyve` and `deep dyve` — missed common misspellings.  
+**Changed to:** Added `deepdive`, `deepdye`, `deepstore` to the `NOT LIKE` chain, same pattern as the `v_brand_vs_nonbrand` fix that added `deepdive` as a third brand term.  
+**Why:** Live data showed "deepdive" (5 competing URLs: `/`, `/faq`, `/login`, `/pricing`, `/signup`) and "deepdye" (16 competing URLs) as the #1 and #2 highest-severity "cannibalization" issues — pure brand-misspelling noise, the exact pattern this filter already exists to remove. The `deepdive` fix had already been made for `v_brand_vs_nonbrand` (see Query 05 below) but never got carried back into this view's own filter, so the bug this filter exists to prevent was still present here.  
+**SQL concept:** A fix made in one report's query doesn't automatically apply to another report querying the same underlying data — each view's filters are independent and need the same fix applied explicitly.
+
+---
+
 ## Query 05: Brand vs Non-Brand
 
 ### Change: Add "deepdive" as third brand term
@@ -134,6 +142,14 @@ Use this as a learning reference — these are real decisions made against real 
 **Changed to:** Added `OR LOWER(query) LIKE '%deepdive%'`
 **Why:** Real GSC data showed "deepdive" (no space, no y) appearing frequently in the cannibalization report. It's a common misspelling that should be classified as brand traffic.
 **SQL concept:** OR chaining in CASE WHEN — you can add as many OR conditions as needed. Each new brand variant is one more OR clause.
+
+---
+
+### Change: Add "deepdye" and "deepstore" as fourth and fifth brand terms
+**Original:** Matched "deepdyve", "deep dyve", "deepdive"
+**Changed to:** Added `OR LOWER(query) LIKE '%deepdye%' OR LOWER(query) LIKE '%deepstore%'`
+**Why:** Found while fixing `v_cannibalization` (see Query 04) — "deepdye" (16 competing URLs) and "deepdive" were the top two false-positive "cannibalization" issues once real noise was filtered out. "deepdive" had already been added here, but "deepdye" and "deepstore" hadn't, so they were still being counted as Non-Brand traffic in this report too.
+**SQL concept:** Same as above — this is a reminder that a brand-term list needs to be kept in sync across every view that uses it (`v_cannibalization` and `v_brand_vs_nonbrand` both hardcode the same list independently; there's no shared source of truth in plain SQL views).
 
 ---
 
