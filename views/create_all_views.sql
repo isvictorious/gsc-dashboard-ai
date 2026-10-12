@@ -329,32 +329,64 @@ FROM zombie_pages
 ORDER BY page_category, ABS(performance_indicator) DESC;
 
 -- ============================================================================
--- View 7: Crawl Health (Stub)
--- Placeholder for Cloudflare log integration
+-- View 7: Crawl Health
+-- What bots with a "Googlebot" user-agent actually received from the site,
+-- from Cloudflare Logpush (searchconsole.cloudflare_logs).
+--
+-- is_verified_googlebot: user-agent strings are trivially spoofed (scanners
+-- probing for /.env files routinely claim to be Googlebot), so each request's
+-- IP is checked against Google's published ranges
+-- (searchconsole.googlebot_ip_ranges, see scripts/refresh_googlebot_ranges.sh).
+--
+-- handled_by: 'edge' = Cloudflare answered without contacting the origin
+-- (OriginResponseStatus = 0: cache hit, WAF block, rate limit);
+-- 'origin' = the DeepDyve app produced the response.
 -- ============================================================================
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_crawl_health` AS
 SELECT
-    CURRENT_DATE() AS data_date,
-    CAST(NULL AS STRING) AS url,
-    CAST(NULL AS INT64) AS status_code,
-    CAST(NULL AS STRING) AS bot_type,
-    CAST(NULL AS INT64) AS crawl_count,
-    CAST(NULL AS FLOAT64) AS avg_response_time_ms,
-    CAST(NULL AS STRING) AS cache_status,
-    'Cloudflare log integration pending' AS status_message
-FROM (SELECT 1) WHERE FALSE;
+    DATE(EdgeStartTimestamp) AS data_date,
+    ClientRequestURI AS url_path,
+    -- First path segment (/lp, /browse, /journals ...) for grouping
+    REGEXP_EXTRACT(ClientRequestURI, r'^(/[^/?]*)') AS url_section,
+    EdgeResponseStatus AS status_code,
+    IF(IFNULL(OriginResponseStatus, 0) = 0, 'edge', 'origin') AS handled_by,
+    CacheCacheStatus AS cache_status,
+    EXISTS (
+        SELECT 1 FROM `deepdyve-491623.searchconsole.googlebot_ip_ranges` r
+        WHERE NET.IP_IN_NET(ClientIP, r.cidr)
+    ) AS is_verified_googlebot,
+    COUNT(*) AS crawl_count
+FROM `deepdyve-491623.searchconsole.cloudflare_logs`
+WHERE ClientIP IS NOT NULL AND ClientIP != ''
+GROUP BY data_date, url_path, url_section, status_code, handled_by, cache_status, is_verified_googlebot;
 
 -- ============================================================================
--- View 8: Error Reconciliation (Stub)
--- Placeholder for GSC + Cloudflare error comparison
+-- View 8: Error Reconciliation
+-- Where does each crawl error come from? Classifies every 4xx/5xx served to
+-- "Googlebot" requests as one of:
+--   Spoofed bot (ignore)   - fake Googlebot (IP not Google's); blocking it is correct
+--   Cloudflare rate limit  - real Googlebot got HTTP 429 from the edge
+--   Cloudflare edge block  - real Googlebot blocked at the edge (WAF / Bot Fight)
+--   Origin error           - the DeepDyve app returned the error itself
+--
+-- Scope note: this reconciles Cloudflare edge vs origin. Comparing against
+-- GSC's own reported statuses needs GSC URL Inspection data
+-- (searchconsole.gsc_url_inspection), which doesn't exist yet.
 -- ============================================================================
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_error_reconciliation` AS
 SELECT
-    CURRENT_DATE() AS data_date,
-    CAST(NULL AS STRING) AS url,
-    CAST(NULL AS STRING) AS gsc_status,
-    CAST(NULL AS INT64) AS actual_status_code,
-    CAST(NULL AS STRING) AS error_category,
-    CAST(NULL AS STRING) AS cloudflare_cache_status,
-    'GSC and Cloudflare integration pending' AS status_message
-FROM (SELECT 1) WHERE FALSE;
+    data_date,
+    url_path,
+    url_section,
+    status_code,
+    cache_status,
+    is_verified_googlebot,
+    CASE
+        WHEN NOT is_verified_googlebot THEN 'Spoofed bot (ignore)'
+        WHEN handled_by = 'edge' AND status_code = 429 THEN 'Cloudflare rate limit'
+        WHEN handled_by = 'edge' THEN 'Cloudflare edge block'
+        ELSE 'Origin error'
+    END AS error_category,
+    crawl_count
+FROM `deepdyve-491623.searchconsole.v_crawl_health`
+WHERE status_code >= 400;
