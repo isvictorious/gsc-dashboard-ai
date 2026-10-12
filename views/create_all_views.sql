@@ -390,3 +390,72 @@ SELECT
     crawl_count
 FROM `deepdyve-491623.searchconsole.v_crawl_health`
 WHERE status_code >= 400;
+
+-- ============================================================================
+-- View 9: Article Visibility
+-- Are /lp/ articles ranking for queries that are actually ABOUT the article?
+-- (Reports 1-6 exclude /lp/ entirely; see CLAUDE.md "Report 9".)
+--
+-- Relevance filter (best-effort until Phase 2 supplies real page titles):
+-- the URL slug is the paper's title, so a query counts as "relevant" when it
+-- shares 2+ meaningful words (4+ letters, minus a few filler words) with the
+-- slug. Topic-mismatch noise ("xxxxsex" -> a sex-chromosome paper) shares at
+-- most one word, so it falls out. Measured over 30 days: pairs sharing 0-1
+-- words hold ~83% of clicks and are almost all noise.
+-- Known limits: a title that legitimately contains the colliding terms still
+-- passes (e.g. a paper really about porn consumption); non-Latin scripts are
+-- matched by letters/digits only, with no stemming or translation.
+-- Per-article, last 30 days. total_* = all queries, relevant_* = filtered.
+-- ============================================================================
+CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_article_visibility` AS
+WITH pairs AS (
+    SELECT
+        url,
+        query,
+        SUM(impressions) AS impressions,
+        SUM(clicks) AS clicks,
+        (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+    WHERE query IS NOT NULL
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        AND url LIKE '%/lp/%'
+    GROUP BY url, query
+),
+words AS (
+    SELECT
+        *,
+        -- Slug = title part of /lp/<publisher>/<title-words>-<10-char id>
+        REGEXP_EXTRACT(url, r'/lp/[^/]+/(.+)-[A-Za-z0-9_]{10}$') AS slug
+    FROM pairs
+),
+scored AS (
+    SELECT
+        *,
+        (
+            SELECT COUNT(DISTINCT w)
+            FROM UNNEST(REGEXP_EXTRACT_ALL(LOWER(query), r'[\p{L}\p{N}]+')) AS w
+            WHERE LENGTH(w) >= 4
+                AND w NOT IN ('with', 'from', 'that', 'this', 'have', 'what', 'pdf', 'free', 'download')
+                AND w IN UNNEST(SPLIT(LOWER(slug), '-'))
+        ) AS shared_words
+    FROM words
+)
+SELECT
+    url,
+    REGEXP_EXTRACT(url, r'https?://[^/]+(.+)') AS url_path,
+    -- Publisher + title slug, for readable display
+    REGEXP_EXTRACT(url, r'/lp/(.+)$') AS article,
+    SUM(impressions) AS total_impressions,
+    SUM(clicks) AS total_clicks,
+    COUNT(*) AS total_queries,
+    SUM(IF(shared_words >= 2, impressions, 0)) AS relevant_impressions,
+    SUM(IF(shared_words >= 2, clicks, 0)) AS relevant_clicks,
+    COUNTIF(shared_words >= 2) AS relevant_queries,
+    ROUND(SAFE_DIVIDE(
+        SUM(IF(shared_words >= 2, avg_position * impressions, 0)),
+        SUM(IF(shared_words >= 2, impressions, 0))), 1) AS relevant_avg_position,
+    -- Best on-topic query: most clicks, then impressions
+    ARRAY_AGG(IF(shared_words >= 2, query, NULL) IGNORE NULLS
+              ORDER BY clicks DESC, impressions DESC LIMIT 1)[SAFE_OFFSET(0)] AS top_relevant_query
+FROM scored
+GROUP BY url;

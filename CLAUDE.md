@@ -10,7 +10,7 @@ SEO intelligence pipeline with 4 phases:
 - **Phase 2:** Automated Screaming Frog cloud crawls → metadata into BigQuery
 - **Phase 3:** WordPress MCP integration → automated SEO fixes
 
-### Report 9: Article Visibility (planned, not yet built)
+### Report 9: Article Visibility (live, best-effort filter)
 All 8 original reports deliberately exclude `/lp/` and `/doc-view/` URLs
 (individual paper pages) to avoid academic-title noise - see the noise
 filters section below. Side effect: none of them can answer "are our
@@ -32,9 +32,13 @@ Portuguese case-study paper ranking for 6+ real variations of its own
 subject, 68+ genuine clicks) - proving articles can rank well, just
 buried under much larger noise volume.
 
-Plan: build as a new, separate view/tab (not modifying the 8 existing
-reports' `/lp/` exclusion, which is correct for their purpose). Will ship
-as best-effort/noise-filtered rather than fully clean until Phase 2 lands.
+Built as a new, separate view/tab (`v_article_visibility`, not modifying the
+8 existing reports' `/lp/` exclusion, which is correct for their purpose).
+Best-effort until Phase 2 lands: a query counts as on-topic when it shares
+2+ meaningful words (4+ letters) with the article's URL slug. Measured over
+30 days, query/article pairs sharing 0-1 words held ~83% of /lp/ clicks and
+were almost all noise; on-topic traffic is ~17% of clicks (757 of 4,587).
+Known gap: papers whose real title contains the colliding terms still pass.
 
 ### Phase 1.5: Cloudflare Log Integration
 Powers reports 7 and 8. Live since 2026-10-07.
@@ -131,7 +135,7 @@ WordPress MCP → automated fixes (Phase 3)
 7. Crawl Health — verified Googlebot activity (live, Cloudflare logs)
 8. Error Reconciliation — edge vs origin error source (live; GSC-status comparison pending gsc_url_inspection)
 9. Article Visibility — are `/lp/` articles ranking for relevant queries,
-   separate from academic-title noise (planned, not yet built — see above)
+   separate from academic-title noise (live, best-effort — see above)
 
 ## Update Workflow
 

@@ -104,6 +104,7 @@ REPORTS = [
     "6 — Page Performance",
     "7 — Crawl Health",
     "8 — Error Reconciliation",
+    "9 — Article Visibility",
 ]
 
 
@@ -1156,6 +1157,111 @@ def error_reconciliation_tab():
     )
 
 
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
+def load_article_stats() -> dict:
+    """Site-wide /lp/ article totals, all queries vs on-topic queries only."""
+    client = get_bq_client()
+    row = client.query(f"""
+        SELECT
+            COUNT(*) AS articles,
+            COUNTIF(relevant_queries > 0) AS with_relevant,
+            COUNTIF(relevant_avg_position <= 10) AS top10,
+            COUNTIF(relevant_clicks > 0) AS with_clicks,
+            SUM(total_impressions) AS total_impressions,
+            SUM(relevant_impressions) AS relevant_impressions,
+            SUM(total_clicks) AS total_clicks,
+            SUM(relevant_clicks) AS relevant_clicks
+        FROM `{PROJECT}.{DATASET}.v_article_visibility`
+    """).to_dataframe().iloc[0]
+    return {k: int(row[k]) for k in row.index}
+
+
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
+def load_top_articles() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(f"""
+        SELECT * FROM `{PROJECT}.{DATASET}.v_article_visibility`
+        WHERE relevant_queries > 0
+        ORDER BY relevant_clicks DESC, relevant_impressions DESC
+        LIMIT 50
+    """).to_dataframe()
+
+
+def render_article_table(df: pd.DataFrame) -> str:
+    rows = []
+    for _, r in df.iterrows():
+        full_url = html.escape(r["url"])
+        label = html.escape(r["article"] or r["url_path"])
+        rows.append(
+            "<tr>"
+            f'<td class="url"><a href="{full_url}" target="_blank">{label}</a></td>'
+            f"<td>{html.escape(r['top_relevant_query'] or '')}</td>"
+            f"<td class=\"mono\">{int(r['relevant_queries']):,}</td>"
+            f"<td class=\"mono\">{int(r['relevant_impressions']):,}</td>"
+            f"<td class=\"mono\">{int(r['relevant_clicks']):,}</td>"
+            f"<td class=\"mono\">{r['relevant_avg_position']}</td>"
+            "</tr>"
+        )
+    return (
+        '<table class="report">'
+        "<thead><tr><th>Article</th><th>Top On-Topic Query</th><th>On-Topic Queries</th>"
+        "<th>Impressions</th><th>Clicks</th><th>Avg Position</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def article_visibility_tab():
+    try:
+        stats = load_article_stats()
+        df = load_top_articles()
+    except Exception as e:  # noqa: BLE001
+        st.error("Couldn't reach BigQuery for Article Visibility.")
+        st.exception(e)
+        return
+
+    st.markdown(
+        '<div class="page-title">Article Visibility — Are Our Articles Ranking?</div>'
+        '<div class="page-sub">Papers under /lp/ (excluded from Reports 1-6), counting only '
+        "queries that are actually about the paper. Last 30 days.</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="action-box">'
+        '<div class="label">Best-effort filter</div>'
+        "<p>Most /lp/ search traffic is title collisions (a query that happens to share a word "
+        "with a paper, not a search for it). A query counts as on-topic here when it shares 2+ "
+        "meaningful words with the article's URL title. That removes most collisions, but not "
+        "papers whose real title contains the colliding terms. Page titles from the Phase 2 crawl "
+        "will make this exact.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    pct = round(100 * stats["relevant_clicks"] / max(stats["total_clicks"], 1))
+    st.markdown(
+        '<div class="scorecards">'
+        f'<div class="card"><div class="card-label">Articles With Impressions</div><div class="card-val">{stats["articles"]:,}</div></div>'
+        f'<div class="card"><div class="card-label">With On-Topic Queries</div><div class="card-val">{stats["with_relevant"]:,}</div></div>'
+        f'<div class="card"><div class="card-label">On-Topic, Avg Position ≤ 10</div><div class="card-val" style="color:var(--green)">{stats["top10"]:,}</div></div>'
+        f'<div class="card"><div class="card-label">Articles With On-Topic Clicks</div><div class="card-val" style="color:var(--green)">{stats["with_clicks"]:,}</div></div>'
+        f'<div class="card"><div class="card-label">On-Topic Clicks</div><div class="card-val">{stats["relevant_clicks"]:,}</div></div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f'{stats["relevant_impressions"]:,} of {stats["total_impressions"]:,} impressions and '
+        f'{stats["relevant_clicks"]:,} of {stats["total_clicks"]:,} clicks ({pct}%) come from '
+        "on-topic queries; the rest is title-collision noise."
+    )
+
+    st.markdown(
+        '<div class="tbl-wrap"><div class="tbl-title">Top Articles by On-Topic Clicks</div>'
+        f"{render_article_table(df)}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def coming_soon_tab(name: str, note: str = ""):
     st.markdown(f'<div class="page-title">{html.escape(name)}</div>', unsafe_allow_html=True)
     st.markdown(
@@ -1183,3 +1289,5 @@ with tabs[6]:
     crawl_health_tab()
 with tabs[7]:
     error_reconciliation_tab()
+with tabs[8]:
+    article_visibility_tab()
