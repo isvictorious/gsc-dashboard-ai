@@ -3,12 +3,12 @@
 SQL queries, BigQuery views, and a Streamlit dashboard for actionable SEO
 intelligence from Google Search Console data.
 
-**Status: 6 of 8 reports live with real data.** Quick Wins, Content Gaps,
+**Status: 8 of 8 reports live with real data.** Quick Wins, Content Gaps,
 CTR Optimization, Cannibalization, Brand vs Non-Brand, and Page Performance
-are all built, verified against live BigQuery data, and viewable in the
-Streamlit app. Crawl Health and Error Reconciliation show illustrative mock
-data behind a clear "not live" banner — they're blocked on Cloudflare log
-integration (Phase 1.5), not yet started. See
+read Google Search Console data; Crawl Health and Error Reconciliation read
+Cloudflare logs streaming into BigQuery (Phase 1.5, live since 2026-10-07).
+Error Reconciliation compares Cloudflare's edge against the origin server;
+the GSC-reported-status comparison is still pending. See
 [docs/phase1.5_cloudflare_setup.md](docs/phase1.5_cloudflare_setup.md).
 
 The dashboard originally targeted Looker Studio (see `docs/looker_setup.md`,
@@ -77,8 +77,8 @@ A keyword with 10,000 impressions and 0 clicks at position 45 is not an opportun
 | 4 | Cannibalization | Which keywords have multiple of my pages competing? | ✅ Live |
 | 5 | Brand vs Non-Brand | How dependent am I on branded traffic? | ✅ Live |
 | 6 | Page Performance | Which pages drive traffic, and which are dead weight? | ✅ Live |
-| 7 | Crawl Health | How is Googlebot crawling my site? | 🚧 Mock data — [setup roadmap](docs/phase1.5_cloudflare_setup.md) |
-| 8 | Error Reconciliation | Do my GSC errors reflect real server errors? | 🚧 Mock data — [setup roadmap](docs/phase1.5_cloudflare_setup.md) |
+| 7 | Crawl Health | How is Googlebot crawling my site? | ✅ Live — [Cloudflare setup](docs/phase1.5_cloudflare_setup.md) |
+| 8 | Error Reconciliation | Which layer (Cloudflare edge or origin) is producing Googlebot's errors? | ✅ Live (edge vs origin; GSC comparison pending) |
 | 9 | Article Visibility | Are our articles (`/lp/`) actually ranking for relevant queries? | 📋 Planned, not yet built |
 
 **Content Gaps note:** this report currently returns 0 rows, which is
@@ -125,11 +125,12 @@ BigQuery Views → Streamlit dashboard (8-tab app, streamlit_app/app.py)
         └── WordPress MCP → automated fixes      ← Phase 3
 ```
 
-**Phase 1.5 status:** not started. Reports 7-8 currently show illustrative
-mock data behind a clear "not live" banner, not real numbers. See
-[docs/phase1.5_cloudflare_setup.md](docs/phase1.5_cloudflare_setup.md) for
-exactly what's needed — it's simpler than it used to be: Cloudflare now
-pushes logs directly into BigQuery with no third-party log router required.
+**Phase 1.5 status:** live. Cloudflare pushes HTTP request logs (Googlebot
+user-agent only) straight into `searchconsole.cloudflare_logs`, and Reports
+7-8 read them. Requests are checked against Google's published IP ranges
+(`scripts/refresh_googlebot_ranges.sh`, re-run monthly) because
+user-agent-only filtering lets spoofed bots through. Setup and findings:
+[docs/phase1.5_cloudflare_setup.md](docs/phase1.5_cloudflare_setup.md).
 
 ---
 

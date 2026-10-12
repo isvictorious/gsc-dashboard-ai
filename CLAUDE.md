@@ -37,7 +37,7 @@ reports' `/lp/` exclusion, which is correct for their purpose). Will ship
 as best-effort/noise-filtered rather than fully clean until Phase 2 lands.
 
 ### Phase 1.5: Cloudflare Log Integration
-Unlocks reports 7 and 8 which are currently stubs.
+Powers reports 7 and 8. Live since 2026-10-07.
 Required to diagnose why GSC traffic is lower than expected — crawl issues
 and server errors are invisible without server-side log data.
 
@@ -50,8 +50,18 @@ Optional for other projects: any CDN with log export capability works.
 Cloudflare is the reference implementation.
 
 Tables needed:
-  - `searchconsole.cloudflare_logs` — raw request logs (url, status_code, user_agent, timestamp, cache_status)
-  - `searchconsole.gsc_url_inspection` — GSC coverage data (exported separately or via API)
+  - `searchconsole.cloudflare_logs` — raw request logs, live. Columns use
+    Cloudflare's own field names (EdgeStartTimestamp, ClientRequestURI,
+    EdgeResponseStatus, OriginResponseStatus, ClientRequestUserAgent,
+    ClientIP, CacheCacheStatus, ...); schema in schemas/cloudflare_logs.json.
+    The Logpush job filters to Googlebot user-agents only.
+  - `searchconsole.googlebot_ip_ranges` — Google's crawler CIDRs, loaded by
+    scripts/refresh_googlebot_ranges.sh (re-run monthly). Needed because the
+    user-agent is spoofable: ~5% of "Googlebot" traffic is fake, including
+    nearly all edge-level 403s. Always use is_verified_googlebot, never
+    user-agent alone.
+  - `searchconsole.gsc_url_inspection` — GSC coverage data (not built yet;
+    needed to compare GSC-reported statuses against the logs)
 
 ### Phase 2: Screaming Frog Metadata Crawl
 Crawls every page (including `/lp/` articles) and captures `page_metadata`:
@@ -118,8 +128,8 @@ WordPress MCP → automated fixes (Phase 3)
 4. Cannibalization — multiple URLs ranking for same query
 5. Brand vs Non-Brand — traffic split analysis
 6. Page Performance — top pages + zombie pages
-7. Crawl Health — Googlebot activity (requires Cloudflare logs)
-8. Error Reconciliation — GSC vs actual status codes (requires Cloudflare logs)
+7. Crawl Health — verified Googlebot activity (live, Cloudflare logs)
+8. Error Reconciliation — edge vs origin error source (live; GSC-status comparison pending gsc_url_inspection)
 9. Article Visibility — are `/lp/` articles ranking for relevant queries,
    separate from academic-title noise (planned, not yet built — see above)
 
