@@ -110,6 +110,17 @@ REPORTS = [
 
 @st.cache_resource
 def get_bq_client():
+    # Deployed (Streamlit Community Cloud): service-account key from app secrets.
+    # Local: falls back to gcloud application-default credentials.
+    try:
+        info = st.secrets.get("gcp_service_account")
+    except Exception:  # noqa: BLE001 - no secrets file locally
+        info = None
+    if info:
+        from google.oauth2 import service_account
+
+        creds = service_account.Credentials.from_service_account_info(dict(info))
+        return bigquery.Client(project=PROJECT, credentials=creds)
     return bigquery.Client(project=PROJECT)
 
 
