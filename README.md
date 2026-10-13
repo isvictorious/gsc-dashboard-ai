@@ -3,12 +3,12 @@
 SQL queries, BigQuery views, and a Streamlit dashboard for actionable SEO
 intelligence from Google Search Console data.
 
-**Status: 6 of 8 reports live with real data.** Quick Wins, Content Gaps,
+**Status: 9 of 9 reports live with real data.** Quick Wins, Content Gaps,
 CTR Optimization, Cannibalization, Brand vs Non-Brand, and Page Performance
-are all built, verified against live BigQuery data, and viewable in the
-Streamlit app. Crawl Health and Error Reconciliation show illustrative mock
-data behind a clear "not live" banner — they're blocked on Cloudflare log
-integration (Phase 1.5), not yet started. See
+read Google Search Console data; Crawl Health and Error Reconciliation read
+Cloudflare logs streaming into BigQuery (Phase 1.5, live since 2026-10-07).
+Error Reconciliation compares Cloudflare's edge against the origin server;
+the GSC-reported-status comparison is still pending. See
 [docs/phase1.5_cloudflare_setup.md](docs/phase1.5_cloudflare_setup.md).
 
 The dashboard originally targeted Looker Studio (see `docs/looker_setup.md`,
@@ -67,7 +67,7 @@ A keyword with 10,000 impressions and 0 clicks at position 45 is not an opportun
 
 ---
 
-## The 8 Reports
+## The Reports
 
 | # | Report | What it answers | Status |
 |---|--------|----------------|--------|
@@ -77,14 +77,29 @@ A keyword with 10,000 impressions and 0 clicks at position 45 is not an opportun
 | 4 | Cannibalization | Which keywords have multiple of my pages competing? | ✅ Live |
 | 5 | Brand vs Non-Brand | How dependent am I on branded traffic? | ✅ Live |
 | 6 | Page Performance | Which pages drive traffic, and which are dead weight? | ✅ Live |
-| 7 | Crawl Health | How is Googlebot crawling my site? | 🚧 Mock data — [setup roadmap](docs/phase1.5_cloudflare_setup.md) |
-| 8 | Error Reconciliation | Do my GSC errors reflect real server errors? | 🚧 Mock data — [setup roadmap](docs/phase1.5_cloudflare_setup.md) |
+| 7 | Crawl Health | How is Googlebot crawling my site? | ✅ Live — [Cloudflare setup](docs/phase1.5_cloudflare_setup.md) |
+| 8 | Error Reconciliation | Which layer (Cloudflare edge or origin) is producing Googlebot's errors? | ✅ Live (edge vs origin; GSC comparison pending) |
+| 9 | Article Visibility | Are our articles (`/lp/`) actually ranking for relevant queries? | ✅ Live (best-effort noise filter until Phase 2 titles) |
 
 **Content Gaps note:** this report currently returns 0 rows, which is
 expected, not broken. DeepDyve is a journal-catalog site with minimal
 blog/editorial content, so there's little of the "ranking for a keyword with
 no dedicated page for it" pattern this report looks for. See
 `docs/sql_decisions.md` (Query 02) for the full writeup.
+
+**Article Visibility note:** reports 1-8 all deliberately exclude `/lp/`
+(article) pages to avoid academic-title noise — see "Understanding Your
+Impressions Data" above. That means none of them can show whether articles
+are actually ranking, which the client specifically asked about. Initial
+investigation (2026-10-01): articles get real visibility (9,688 distinct
+pages, 259K impressions, 5,225 clicks in 30 days, 81% already top-10), but
+most of that volume is the same noise pattern — and the standard length/dot
+filters don't catch it here, since terms like "xxxxsex" are long enough and
+dot-free to pass. Real signal exists once noise terms are excluded (e.g. a
+case-study paper ranking for 6+ real variations of its own subject). Full
+signal/noise separation needs Phase 2's page title data; this report will
+ship as best-effort/noise-filtered before that lands. See `CLAUDE.md` for
+the full writeup.
 
 ---
 
@@ -110,11 +125,12 @@ BigQuery Views → Streamlit dashboard (8-tab app, streamlit_app/app.py)
         └── WordPress MCP → automated fixes      ← Phase 3
 ```
 
-**Phase 1.5 status:** not started. Reports 7-8 currently show illustrative
-mock data behind a clear "not live" banner, not real numbers. See
-[docs/phase1.5_cloudflare_setup.md](docs/phase1.5_cloudflare_setup.md) for
-exactly what's needed — it's simpler than it used to be: Cloudflare now
-pushes logs directly into BigQuery with no third-party log router required.
+**Phase 1.5 status:** live. Cloudflare pushes HTTP request logs (Googlebot
+user-agent only) straight into `searchconsole.cloudflare_logs`, and Reports
+7-8 read them. Requests are checked against Google's published IP ranges
+(`scripts/refresh_googlebot_ranges.sh`, re-run monthly) because
+user-agent-only filtering lets spoofed bots through. Setup and findings:
+[docs/phase1.5_cloudflare_setup.md](docs/phase1.5_cloudflare_setup.md).
 
 ---
 

@@ -4,6 +4,9 @@ service-account*.json
 credentials*.json
 gcloud/
 
+# Table schemas contain no secrets - keep them tracked despite *.json above
+!schemas/*.json
+
 # Environment files
 .env
 .env.*
@@ -14,7 +17,10 @@ config/project.env
 .DS_Store
 
 # Editor
-.vscode/
+.vscode/*
+# Shared project editor config stays tracked
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.swp
 

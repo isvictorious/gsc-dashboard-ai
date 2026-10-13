@@ -1,12 +1,8 @@
-# Phase 1.5: Cloudflare Log Integration — Setup Roadmap
+# Phase 1.5: Cloudflare Log Integration
 
-**Status:** Not started. This is what's needed to unlock Reports 7 (Crawl Health)
-and 8 (Error Reconciliation), which are currently stubs showing mock/example
-data only.
-
-**Verified against Cloudflare's current docs (Oct 2026)** — this corrects an
-earlier version of this doc that assumed a third-party tool (Logflare) was
-required. It isn't anymore; see below.
+**Status: live since 2026-10-07.** Cloudflare streams Googlebot-user-agent
+requests into `searchconsole.cloudflare_logs`, and Reports 7 (Crawl Health) and
+8 (Error Reconciliation) read them.
 
 ## Why this matters
 
@@ -26,68 +22,70 @@ Googlebot, at that scale, has the signature of a single misconfigured
 Cloudflare rule (WAF, Bot Fight Mode, or a rate limit) rather than thousands
 of independent problems — this data is what would confirm or rule that out.
 
-## The pipeline — simpler than originally scoped
+## The pipeline
 
 ```
-Cloudflare Logpush → BigQuery (cloudflare_logs table)
+Cloudflare Logpush → BigQuery (cloudflare_logs)   ← streaming, no middleman
+Google's Googlebot IP list → BigQuery (googlebot_ip_ranges)   ← monthly refresh
+            ↓
+   v_crawl_health → v_error_reconciliation → Streamlit tabs 7 and 8
 ```
 
-**No middleman service is needed.** Cloudflare added a native BigQuery
-Logpush destination directly in their dashboard. Once the one-time job is
-configured, Cloudflare's own infrastructure streams every request (including
-Googlebot's) directly into a BigQuery table, continuously, automatically —
-no Logflare account, no custom app code, nothing for the Streamlit app or
-any script to poll or pull. The dashboard just reads the resulting table the
-same way it reads every other view in this project.
+Cloudflare's native BigQuery destination needs no third-party log router
+(Logflare is no longer required).
 
-(An older guide this project's original mockup cited used Cloudflare →
-Logflare → BigQuery, which was the standard pattern before Cloudflare added
-direct BigQuery support. Logflare still exists and is actively maintained
-(now part of Supabase) — it's a reasonable alternative if you want a nicer
-log-exploration UI on top of the raw data, but it's no longer required to
-get logs into BigQuery.)
+## How it was set up (reproducible)
 
-## Setup steps
+1. **Google Cloud:** service account `cloudflare-logpush@deepdyve-491623.iam.gserviceaccount.com`
+   with `roles/bigquery.dataEditor` on the `cloudflare_logs` table only
+   (not the dataset or project), and a JSON key.
+2. **Table:** `bq mk --table --time_partitioning_field=EdgeStartTimestamp --time_partitioning_type=DAY deepdyve-491623:searchconsole.cloudflare_logs schemas/cloudflare_logs.json`.
+   Columns use Cloudflare's own field names (the earlier plan of friendly
+   names like `url` / `status_code` was wrong). Cloudflare's docs don't spell
+   out the column-naming rule; Cloudflare's field names worked on the first try.
+3. **Cloudflare dashboard** (needs zone admin): Analytics & Logs → Logpush →
+   Create job → Google BigQuery → project / dataset / table above, paste the
+   JSON key, dataset **HTTP requests**, select exactly the 10 fields in the
+   schema file (extra fields fail the insert), timestamp format **RFC3339**,
+   filter `ClientRequestUserAgent` contains `Googlebot`.
+4. **Googlebot IP ranges:** `./scripts/refresh_googlebot_ranges.sh` (re-run
+   about monthly; Google updates the list).
+5. **Views:** `./scripts/deploy_views.sh`.
 
-1. **Cloudflare must already be managing DNS for the domain** — prerequisite
-   before anything else.
-2. **Plan tier: confirmed available on all Cloudflare plans** (Free, Pro,
-   Business, Enterprise support Logpush per Cloudflare's docs) — DeepDyve
-   likely doesn't need to upgrade. Worth a quick check in the dashboard for
-   your specific zone, since retention windows/limits can still vary by
-   plan even when the feature itself is available everywhere.
-3. **Google Cloud side — create a service account:**
-   - IAM & Admin → Service Accounts → create one scoped to this project
-     (`deepdyve-491623`)
-   - Grant it **BigQuery Data Editor** on the `searchconsole` dataset
-     (minimum required permission: `bigquery.tables.updateData`)
-   - Generate a JSON key
-4. **Pre-create the destination table** — Cloudflare streams *into* an
-   existing table, it doesn't create one for you. Define the schema (`url`,
-   `status_code`, `user_agent`, `timestamp`, `cache_status` at minimum —
-   matches what `CLAUDE.md` already specifies) and create it with
-   `bq mk --table "deepdyve-491623:searchconsole.cloudflare_logs" schema.json`
-5. **Create the Logpush job** — Cloudflare dashboard → Analytics & Logs →
-   Logpush → Create a Logpush job:
-   - Destination: **Google BigQuery**
-   - Enter Project ID, Dataset ID, Table ID, and paste the service account
-     JSON credentials directly in the job config
-   - Dataset to push: **HTTP Requests** (this is the one with per-request
-     URL/status/user-agent/timestamp detail — not the aggregated analytics
-     datasets)
-   - Can also be done via API instead of the dashboard, using a
-     `destination_conf` string shaped like
-     `bq://projects/<PROJECT_ID>/datasets/<DATASET_ID>/tables/<TABLE_ID>?credentials=<ENCODED_VALUE>`
-6. **Filter to Googlebot only** when querying the resulting table: match
-   `user_agent` containing "Googlebot" *and* verify by IP range (Google
-   publishes Googlebot's IP ranges) — user-agent alone can be spoofed, so
-   real crawl-log analysis always double-checks against IP.
-7. **Update the stub views** (`v_crawl_health`, `v_error_reconciliation` in
-   `views/create_all_views.sql`) to replace their `WHERE FALSE` placeholder
-   queries with real logic once `cloudflare_logs` has data — join on URL
-   against `searchdata_url_impression`, bucket by status code, and compute
-   the reconciliation logic (GSC-reported error vs. Cloudflare log vs.
-   origin status).
+The service account key is what the Cloudflare job logs in with. Deleting or
+revoking it in Google Cloud stops the logging. If it is ever rotated, create a
+new key and paste it into the Cloudflare job.
+
+## Why user-agent alone is not enough
+
+Roughly 5% of requests with a Googlebot user-agent are not from Google. In
+the first day of data, nearly every edge-level 403 was a scanner probing for
+`/.env`, `/@fs/`, `/.ssh` and similar from Google Cloud IP ranges, claiming to
+be Googlebot. Cloudflare blocking those is correct. The views therefore
+classify each request with `is_verified_googlebot` (IP inside Google's
+published ranges, via `NET.IP_IN_NET`) and the reports only count verified
+traffic. Note: Google's `googlebot.json` URL now redirects to a
+common-crawlers list, a superset that also includes Google's other crawlers.
+
+## First findings (first ~20 hours of data, 2026-10-07 to 2026-10-08)
+
+Small sample, worth re-checking as data accumulates.
+
+- **Cloudflare is not blocking real Googlebot at the edge.** Of ~380 edge
+  403s, only 5 were verified Googlebot; the rest were spoofed scanners.
+- **Real Googlebot 403s come from the origin app**: ~195 were
+  `/journals/...` URLs, plus `/images/...` files. Since Cloudflare isn't the
+  cause, the ~72.8K GSC "Blocked due to access forbidden (403)" pages are
+  more likely an application or hosting rule on the origin. Next step: check
+  whether `/journals/` returns 403 to Googlebot by design, and compare the
+  affected URLs against the GSC list.
+- **Cloudflare rate-limits real Googlebot (429)**, ~163 requests, almost all
+  `/images/*` (for example `/images/trustwave-seal.png`). Fix: exempt
+  verified Googlebot from that rate-limit rule.
+- **About 45% of verified Googlebot requests are redirects** (mostly `/lp/`
+  302s and `/browse/` 307s). That is crawl budget spent on redirects; worth
+  finding where these URLs are linked from and whether the targets can be
+  linked directly.
 
 ## Ruled out: Cloudflare's GraphQL Analytics API
 
@@ -115,23 +113,15 @@ Logpush's HTTP Requests dataset, not the GraphQL API.
   (fixable by changing one WAF/Bot Fight Mode rule) or the origin app
   itself returning 403 for unrelated reasons (a different, code-level fix).
 
-## Decision needed before starting
+## Still open
 
-This is real infrastructure work (a Cloudflare dashboard config change, a
-new BigQuery table receiving continuous streaming writes) — not something
-to spin up casually, even though it's simpler than originally scoped:
-
-- Who manages the Google Cloud service account JSON key — it gets pasted
-  directly into Cloudflare's dashboard, so treat it as a real credential
-  (scoped narrowly to just this one dataset, not a project-wide key).
-- Estimate BigQuery storage/streaming-insert cost once full request-level
-  logs are flowing continuously — this is a much higher-volume, continuous
-  table compared to the daily GSC export, worth a rough cost estimate
-  before committing (same discipline we used to check query costs for the
-  existing reports — see `docs/sql_decisions.md` cost notes).
-- Streaming insert limits to be aware of: 10 MB max per request/row, 50,000
-  rows max per request — shouldn't matter at DeepDyve's traffic level, but
-  worth knowing if request volume is much higher than expected.
+- **GSC comparison for Error Reconciliation.** The report compares
+  Cloudflare's edge against the origin. Comparing against GSC's own reported
+  statuses needs `searchconsole.gsc_url_inspection` data (URL Inspection
+  API), not built yet.
+- **Cost.** Streaming rows are small at the current volume (~1,100 rows/hour,
+  Googlebot only). Check BigQuery storage and query cost after a month; the
+  views scan the whole table.
 
 ## Sources
 

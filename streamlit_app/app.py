@@ -74,9 +74,6 @@ td.url a:hover { text-decoration:underline; }
 .empty-state p:last-child { margin-bottom:0; }
 .empty-state code { background:var(--surface2); padding:1px 5px; border-radius:4px; font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--accent); }
 
-.mock-banner { background:var(--red-soft); border:2px solid var(--red); border-radius:8px; padding:16px 20px; margin-bottom:20px; }
-.mock-banner .mock-title { font-size:14px; font-weight:700; color:var(--red); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
-.mock-banner p { font-size:13px; color:var(--text); line-height:1.5; margin:0; }
 
 .chart-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }
 .chart-box { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px; }
@@ -107,11 +104,23 @@ REPORTS = [
     "6 — Page Performance",
     "7 — Crawl Health",
     "8 — Error Reconciliation",
+    "9 — Article Visibility",
 ]
 
 
 @st.cache_resource
 def get_bq_client():
+    # Deployed (Streamlit Community Cloud): service-account key from app secrets.
+    # Local: falls back to gcloud application-default credentials.
+    try:
+        info = st.secrets.get("gcp_service_account")
+    except Exception:  # noqa: BLE001 - no secrets file locally
+        info = None
+    if info:
+        from google.oauth2 import service_account
+
+        creds = service_account.Credentials.from_service_account_info(dict(info))
+        return bigquery.Client(project=PROJECT, credentials=creds)
     return bigquery.Client(project=PROJECT)
 
 
@@ -869,19 +878,112 @@ def page_performance_tab():
         )
 
 
-def mock_data_banner(report_name: str) -> None:
-    st.markdown(
-        '<div class="mock-banner">'
-        f'<div class="mock-title">⚠️ Sample data — not live</div>'
-        f"<p>Everything below is illustrative example data showing what "
-        f"<strong>{html.escape(report_name)}</strong> will look like once it's "
-        "built — none of these numbers are real. This report needs "
-        "Cloudflare log integration (Phase 1.5), which hasn't been built yet. "
-        "See <code>docs/phase1.5_cloudflare_setup.md</code> for the setup "
-        "roadmap.</p>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+@st.cache_data(ttl=3600)  # 1h - logs stream in continuously, but the report doesn't need minute-level freshness
+def load_crawl_summary() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"""
+        SELECT
+            MIN(data_date) AS first_date,
+            MAX(data_date) AS last_date,
+            SUM(crawl_count) AS total_requests,
+            SUM(IF(is_verified_googlebot, crawl_count, 0)) AS verified_requests,
+            COUNT(DISTINCT IF(is_verified_googlebot, url_path, NULL)) AS verified_urls,
+            SUM(IF(is_verified_googlebot AND status_code BETWEEN 300 AND 399, crawl_count, 0)) AS verified_redirects,
+            SUM(IF(is_verified_googlebot AND status_code >= 400, crawl_count, 0)) AS verified_errors
+        FROM `{PROJECT}.{DATASET}.v_crawl_health`
+        """
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=3600)
+def load_crawl_status_mix() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"""
+        SELECT
+            CASE
+                WHEN status_code BETWEEN 200 AND 299 THEN '2xx OK'
+                WHEN status_code BETWEEN 300 AND 399 THEN '3xx Redirect'
+                WHEN status_code = 403 THEN '403 Forbidden'
+                WHEN status_code = 404 THEN '404 Not found'
+                WHEN status_code = 429 THEN '429 Rate limited'
+                ELSE 'Other'
+            END AS bucket,
+            SUM(crawl_count) AS n
+        FROM `{PROJECT}.{DATASET}.v_crawl_health`
+        WHERE is_verified_googlebot
+        GROUP BY bucket
+        ORDER BY n DESC
+        """
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=3600)
+def load_crawl_cache_mix() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"""
+        SELECT IFNULL(cache_status, 'unknown') AS cache_status, SUM(crawl_count) AS n
+        FROM `{PROJECT}.{DATASET}.v_crawl_health`
+        WHERE is_verified_googlebot
+        GROUP BY cache_status
+        ORDER BY n DESC
+        """
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=3600)
+def load_crawl_sections() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"""
+        SELECT
+            IFNULL(url_section, '/') AS url_section,
+            SUM(crawl_count) AS requests,
+            COUNT(DISTINCT url_path) AS urls,
+            SAFE_DIVIDE(SUM(IF(status_code BETWEEN 300 AND 399, crawl_count, 0)), SUM(crawl_count)) AS redirect_share,
+            SAFE_DIVIDE(SUM(IF(status_code >= 400, crawl_count, 0)), SUM(crawl_count)) AS error_share
+        FROM `{PROJECT}.{DATASET}.v_crawl_health`
+        WHERE is_verified_googlebot
+        GROUP BY url_section
+        ORDER BY requests DESC
+        LIMIT 12
+        """
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=3600)
+def load_error_categories() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"""
+        SELECT error_category, SUM(crawl_count) AS requests, COUNT(DISTINCT url_path) AS urls
+        FROM `{PROJECT}.{DATASET}.v_error_reconciliation`
+        GROUP BY error_category
+        """
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=3600)
+def load_error_detail() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"""
+        SELECT
+            error_category,
+            IFNULL(url_section, '/') AS url_section,
+            status_code,
+            SUM(crawl_count) AS requests,
+            COUNT(DISTINCT url_path) AS urls,
+            ARRAY_AGG(url_path ORDER BY crawl_count DESC LIMIT 1)[OFFSET(0)] AS example_url
+        FROM `{PROJECT}.{DATASET}.v_error_reconciliation`
+        WHERE error_category != 'Spoofed bot (ignore)'
+        GROUP BY error_category, url_section, status_code
+        ORDER BY requests DESC
+        LIMIT 25
+        """
+    ).to_dataframe()
 
 
 def donut_chart(title: str, segments: list, center_val: str, center_lbl: str) -> str:
@@ -894,7 +996,7 @@ def donut_chart(title: str, segments: list, center_val: str, center_lbl: str) ->
     gradient = ", ".join(stops)
     legend_items = "".join(
         f'<div class="legend-item"><div class="legend-dot" style="background:var({color})"></div>'
-        f"{html.escape(label)} — {pct}% ({html.escape(detail)})</div>"
+        f"{html.escape(label)} — {pct:.0f}% ({html.escape(detail)})</div>"
         for label, pct, color, detail in segments
     )
     return (
@@ -909,165 +1011,264 @@ def donut_chart(title: str, segments: list, center_val: str, center_lbl: str) ->
     )
 
 
+def mix_segments(df: pd.DataFrame, label_col: str, colors: dict, default_color: str = "--text-dim") -> list:
+    """Turn a (label, n) frame into donut segments with percentages of the total."""
+    total = df["n"].sum()
+    return [
+        (row[label_col], 100 * row["n"] / total, colors.get(row[label_col], default_color), f"{int(row['n']):,} requests")
+        for _, row in df.iterrows()
+    ]
+
+
+STATUS_COLORS = {
+    "2xx OK": "--green",
+    "3xx Redirect": "--amber",
+    "403 Forbidden": "--red",
+    "404 Not found": "--accent",
+    "429 Rate limited": "--red",
+}
+CACHE_COLORS = {"hit": "--green", "dynamic": "--accent", "bypass": "--amber", "miss": "--amber"}
+
+
 def crawl_health_tab():
-    mock_data_banner("Crawl Health")
+    summary = load_crawl_summary().iloc[0]
+    if not summary["total_requests"]:
+        st.info("No Cloudflare log data yet.")
+        return
+
+    total = int(summary["total_requests"])
+    verified = int(summary["verified_requests"])
+    spoofed = total - verified
 
     st.markdown(
         '<div class="page-title">Crawl Health — Googlebot Behavior & Status Codes</div>'
-        '<div class="page-sub">How Googlebot is crawling your site: volume, '
-        "frequency, response codes, and crawl budget waste. Requires Cloudflare "
-        "logs blended with GSC data.</div>",
+        f'<div class="page-sub">What Googlebot actually receives from the site, from '
+        f'Cloudflare logs ({summary["first_date"]} to {summary["last_date"]}). '
+        "Only requests from Google's published IP ranges count as Googlebot; "
+        "requests that merely claim to be Googlebot are excluded.</div>",
         unsafe_allow_html=True,
     )
 
     st.markdown(
         '<div class="action-box">'
-        '<div class="label">How this will work</div>'
-        "<p>This report will show what Googlebot actually experiences when it "
-        "hits your site — not just what GSC reports with a 2-3 day lag. "
-        "If Cloudflare is serving cached/stale content to Googlebot, or crawl "
-        "volume drops suddenly, this is where you'd see it first.</p>"
+        '<div class="label">Why verification matters</div>'
+        f"<p>{spoofed:,} of {total:,} requests ({100 * spoofed / total:.1f}%) used a "
+        "Googlebot user-agent but did not come from Google's IP ranges. Most are "
+        "scanners probing for exposed files like <code>/.env</code>. Cloudflare "
+        "blocking those is correct, so they're left out of every number below.</p>"
         "</div>",
         unsafe_allow_html=True,
     )
 
+    redirects = int(summary["verified_redirects"])
+    errors = int(summary["verified_errors"])
     st.markdown(
         '<div class="scorecards">'
-        '<div class="card"><div class="card-label">Googlebot Requests / Day</div>'
-        '<div class="card-val">1,842</div></div>'
-        '<div class="card"><div class="card-label">Unique URLs Crawled</div>'
-        '<div class="card-val">347</div></div>'
-        '<div class="card"><div class="card-label">Crawl Errors (5xx)</div>'
-        '<div class="card-val" style="color:var(--red)">23</div></div>'
-        '<div class="card"><div class="card-label">Avg Response Time</div>'
-        '<div class="card-val">420ms</div></div>'
-        '<div class="card"><div class="card-label">CF Cache Hit Rate</div>'
-        '<div class="card-val" style="color:var(--green)">68%</div></div>'
+        f'<div class="card"><div class="card-label">Verified Googlebot Requests</div><div class="card-val">{verified:,}</div></div>'
+        f'<div class="card"><div class="card-label">Unique URLs Crawled</div><div class="card-val">{int(summary["verified_urls"]):,}</div></div>'
+        f'<div class="card"><div class="card-label">Redirect Share (3xx)</div><div class="card-val" style="color:var(--amber)">{100 * redirects / verified:.0f}%</div></div>'
+        f'<div class="card"><div class="card-label">Error Share (4xx/5xx)</div><div class="card-val" style="color:var(--red)">{100 * errors / verified:.1f}%</div></div>'
+        f'<div class="card"><div class="card-label">Fake Googlebot Traffic</div><div class="card-val">{100 * spoofed / total:.1f}%</div></div>'
         "</div>",
         unsafe_allow_html=True,
     )
 
+    status_mix = load_crawl_status_mix()
+    cache_mix = load_crawl_cache_mix().head(4)
+    ok_pct = 100 * status_mix.loc[status_mix["bucket"] == "2xx OK", "n"].sum() / status_mix["n"].sum()
+    top_cache = cache_mix.iloc[0]
     status_donut = donut_chart(
-        "Googlebot Status Code Distribution (example)",
-        [
-            ("200 OK", 72, "--green", "1,326/day"),
-            ("301/302", 12, "--amber", "221/day"),
-            ("5xx Errors", 7, "--red", "129/day"),
-            ("404", 9, "--accent", "166/day"),
-        ],
-        "72%", "200 OK",
+        "Verified Googlebot — Status Codes",
+        mix_segments(status_mix, "bucket", STATUS_COLORS),
+        f"{ok_pct:.0f}%", "2xx OK",
     )
     cache_donut = donut_chart(
-        "Cloudflare Cache Status for Googlebot (example)",
-        [
-            ("HIT (cached)", 68, "--accent", "cached"),
-            ("MISS (origin fetch)", 17, "--amber", "origin fetch"),
-            ("DYNAMIC/BYPASS", 15, "--red", "bypass"),
-        ],
-        "68%", "HIT",
+        "Verified Googlebot — Cloudflare Cache Status",
+        mix_segments(cache_mix, "cache_status", CACHE_COLORS),
+        f"{100 * top_cache['n'] / cache_mix['n'].sum():.0f}%", str(top_cache["cache_status"]),
     )
     st.markdown(f'<div class="chart-row">{status_donut}{cache_donut}</div>', unsafe_allow_html=True)
 
-    example_5xx = [
-        ("/example/calendar-page/", "500", 142, "DYNAMIC", "CF edge timeout on dynamic queries"),
-        ("/example/api-endpoint/", "500", 98, "BYPASS", "REST API timeout at CF edge"),
-        ("/example/course-page/", "502", 67, "MISS", "Confirmed origin error"),
-        ("/example/feed/", "500", 54, "DYNAMIC", "RSS feed timing out at CF edge"),
-    ]
+    sections = load_crawl_sections()
     rows = "".join(
-        f'<tr><td class="url">{html.escape(path)}</td><td class="mono" '
-        f'style="color:var(--red)">{status}</td><td class="mono">{hits}</td>'
-        f'<td>{cache}</td><td style="font-size:12px;color:var(--amber)">{html.escape(cause)}</td></tr>'
-        for path, status, hits, cache, cause in example_5xx
+        f'<tr><td class="url">{html.escape(r.url_section)}</td>'
+        f'<td class="mono">{int(r.requests):,}</td><td class="mono">{int(r.urls):,}</td>'
+        f'<td class="mono" style="color:var(--amber)">{100 * r.redirect_share:.0f}%</td>'
+        f'<td class="mono" style="color:var(--red)">{100 * r.error_share:.1f}%</td></tr>'
+        for r in sections.itertuples()
     )
     st.markdown(
-        '<div class="tbl-wrap"><div class="tbl-title" style="color:var(--red)">'
-        "⚠️ URLs Returning 5xx to Googlebot (example)</div>"
-        '<table class="report"><thead><tr><th>URL</th><th>Status</th>'
-        "<th>Hits (30d)</th><th>CF Cache</th><th>Likely Cause</th></tr></thead>"
+        '<div class="tbl-wrap"><div class="tbl-title">Where Googlebot Spends Its Crawl — by Site Section</div>'
+        '<table class="report"><thead><tr><th>Section</th><th>Requests</th>'
+        "<th>Unique URLs</th><th>Redirects</th><th>Errors</th></tr></thead>"
         f"<tbody>{rows}</tbody></table></div>",
         unsafe_allow_html=True,
     )
 
 
+ERROR_CATEGORY_INFO = {
+    "Origin error": ("var(--red)", "The DeepDyve app itself returned this. Fix in the application, not Cloudflare."),
+    "Cloudflare rate limit": ("var(--amber)", "Cloudflare answered 429 without asking the origin. Exempt verified Googlebot from this rate limit."),
+    "Cloudflare edge block": ("var(--amber)", "Cloudflare blocked a verified Googlebot request. Check which WAF / Bot Fight rule fired."),
+}
+
+
 def error_reconciliation_tab():
-    mock_data_banner("Error Reconciliation")
+    categories = load_error_categories().set_index("error_category")
+    if categories.empty:
+        st.info("No Cloudflare log data yet.")
+        return
+
+    def req(name: str) -> int:
+        return int(categories.loc[name, "requests"]) if name in categories.index else 0
 
     st.markdown(
-        '<div class="page-title">Error Reconciliation — GSC vs Cloudflare vs Origin</div>'
-        '<div class="page-sub">Cross-references GSC-reported errors against '
-        "Cloudflare edge logs and origin server logs to find where things "
-        "actually break.</div>",
+        '<div class="page-title">Error Reconciliation — Cloudflare Edge vs Origin</div>'
+        '<div class="page-sub">For every error served to a "Googlebot" request, which layer '
+        "produced it? Spoofed bots are separated out so they don't inflate the real problem.</div>",
         unsafe_allow_html=True,
     )
 
     st.markdown(
         '<div class="action-box">'
-        '<div class="label">How this will work</div>'
-        "<p>GSC reports an error but your server logs show 200? The problem "
-        "is likely at the Cloudflare edge — timeouts, Worker errors, or "
-        "WAF blocks. This report will reconcile all three sources to pinpoint "
-        "exactly where each error occurs: Origin → Cloudflare → "
-        "Googlebot.</p>"
+        '<div class="label">Scope</div>'
+        "<p>This compares Cloudflare's edge against the origin server. Comparing against "
+        "the statuses GSC itself reports needs GSC URL Inspection data, which isn't "
+        "connected yet.</p>"
         "</div>",
         unsafe_allow_html=True,
     )
 
     st.markdown(
         '<div class="scorecards">'
-        '<div class="card"><div class="card-label">GSC Reported 5xx</div>'
-        '<div class="card-val" style="color:var(--red)">38</div></div>'
-        '<div class="card"><div class="card-label">CF Log 5xx</div>'
-        '<div class="card-val" style="color:var(--amber)">12</div></div>'
-        '<div class="card"><div class="card-label">Origin Log 5xx</div>'
-        '<div class="card-val" style="color:var(--green)">3</div></div>'
-        '<div class="card"><div class="card-label">Phantom Errors (GSC only)</div>'
-        '<div class="card-val" style="color:var(--amber)">26</div></div>'
+        f'<div class="card"><div class="card-label">Origin Errors</div><div class="card-val" style="color:var(--red)">{req("Origin error"):,}</div></div>'
+        f'<div class="card"><div class="card-label">Cloudflare Rate Limits (429)</div><div class="card-val" style="color:var(--amber)">{req("Cloudflare rate limit"):,}</div></div>'
+        f'<div class="card"><div class="card-label">Cloudflare Edge Blocks</div><div class="card-val" style="color:var(--amber)">{req("Cloudflare edge block"):,}</div></div>'
+        f'<div class="card"><div class="card-label">Spoofed Bot Errors (ignore)</div><div class="card-val">{req("Spoofed bot (ignore)"):,}</div></div>'
         "</div>",
         unsafe_allow_html=True,
     )
 
+    detail = load_error_detail()
+    rows = "".join(
+        f'<tr><td style="color:{ERROR_CATEGORY_INFO[r.error_category][0]};font-weight:600">{html.escape(r.error_category)}</td>'
+        f'<td class="url">{html.escape(r.url_section)}</td>'
+        f'<td class="mono">{int(r.status_code)}</td>'
+        f'<td class="mono">{int(r.requests):,}</td><td class="mono">{int(r.urls):,}</td>'
+        f'<td class="url">{html.escape(r.example_url)}</td>'
+        f'<td style="font-size:12px">{html.escape(ERROR_CATEGORY_INFO[r.error_category][1])}</td></tr>'
+        for r in detail.itertuples()
+    )
     st.markdown(
-        '<div class="tbl-wrap" style="padding:20px;">'
-        '<div class="tbl-title" style="padding:0 0 12px;">Request Flow — '
-        "Where Errors Happen (example)</div>"
-        '<div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;">'
-        '<div class="flow-step"><div class="flow-title" style="color:var(--green)">Origin Server</div>'
-        '<div class="flow-sub">3 errors (8%)</div></div>'
-        '<div style="color:var(--text-dim);font-size:20px;">→</div>'
-        '<div class="flow-step"><div class="flow-title" style="color:var(--amber)">Cloudflare Edge</div>'
-        '<div class="flow-sub">9 errors (24%)</div></div>'
-        '<div style="color:var(--text-dim);font-size:20px;">→</div>'
-        '<div class="flow-step"><div class="flow-title" style="color:var(--red)">Googlebot Sees</div>'
-        '<div class="flow-sub">38 errors total</div></div>'
-        '<div style="color:var(--text-dim);font-size:20px;">→</div>'
-        '<div class="flow-step"><div class="flow-title" style="color:var(--accent)">26 Phantom Errors</div>'
-        '<div class="flow-sub">GSC only, no CF/origin match</div></div>'
-        "</div></div>",
+        '<div class="tbl-wrap"><div class="tbl-title">Errors Served to Verified Googlebot — by Layer and Section</div>'
+        '<table class="report"><thead><tr><th>Layer</th><th>Section</th><th>Status</th>'
+        "<th>Requests</th><th>URLs</th><th>Example</th><th>What to do</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>",
         unsafe_allow_html=True,
     )
 
-    example_errors = [
-        ("/example/calendar-page/", "500", "200", "200", "Phantom", "Monitor — likely transient edge timeout"),
-        ("/example/api-endpoint/", "500", "522", "200", "CF Edge", "CF 522 = connection timeout, increase origin timeout"),
-        ("/example/course-page/", "502", "502", "502", "Origin", "True origin error — fix at the source"),
-        ("/example/feed/", "500", "524", "200", "CF Edge", "CF 524 = origin took >100s"),
-    ]
-    rows = "".join(
-        f'<tr><td class="url">{html.escape(path)}</td>'
-        f'<td class="mono" style="color:var(--red)">{gsc}</td>'
-        f'<td class="mono">{cf}</td><td class="mono">{origin}</td>'
-        f'<td>{badge("High" if layer in ("Origin", "Phantom") else "Med")}</td>'
-        f'<td style="font-size:12px">{html.escape(note)}</td></tr>'
-        for path, gsc, cf, origin, layer, note in example_errors
+
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
+def load_article_stats() -> dict:
+    """Site-wide /lp/ article totals, all queries vs on-topic queries only."""
+    client = get_bq_client()
+    row = client.query(f"""
+        SELECT
+            COUNT(*) AS articles,
+            COUNTIF(relevant_queries > 0) AS with_relevant,
+            COUNTIF(relevant_avg_position <= 10) AS top10,
+            COUNTIF(relevant_clicks > 0) AS with_clicks,
+            SUM(total_impressions) AS total_impressions,
+            SUM(relevant_impressions) AS relevant_impressions,
+            SUM(total_clicks) AS total_clicks,
+            SUM(relevant_clicks) AS relevant_clicks
+        FROM `{PROJECT}.{DATASET}.v_article_visibility`
+    """).to_dataframe().iloc[0]
+    return {k: int(row[k]) for k in row.index}
+
+
+@st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
+def load_top_articles() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(f"""
+        SELECT * FROM `{PROJECT}.{DATASET}.v_article_visibility`
+        WHERE relevant_queries > 0
+        ORDER BY relevant_clicks DESC, relevant_impressions DESC
+        LIMIT 50
+    """).to_dataframe()
+
+
+def render_article_table(df: pd.DataFrame) -> str:
+    rows = []
+    for _, r in df.iterrows():
+        full_url = html.escape(r["url"])
+        label = html.escape(r["article"] or r["url_path"])
+        rows.append(
+            "<tr>"
+            f'<td class="url"><a href="{full_url}" target="_blank">{label}</a></td>'
+            f"<td>{html.escape(r['top_relevant_query'] or '')}</td>"
+            f"<td class=\"mono\">{int(r['relevant_queries']):,}</td>"
+            f"<td class=\"mono\">{int(r['relevant_impressions']):,}</td>"
+            f"<td class=\"mono\">{int(r['relevant_clicks']):,}</td>"
+            f"<td class=\"mono\">{r['relevant_avg_position']}</td>"
+            "</tr>"
+        )
+    return (
+        '<table class="report">'
+        "<thead><tr><th>Article</th><th>Top On-Topic Query</th><th>On-Topic Queries</th>"
+        "<th>Impressions</th><th>Clicks</th><th>Avg Position</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
     )
+
+
+def article_visibility_tab():
+    try:
+        stats = load_article_stats()
+        df = load_top_articles()
+    except Exception as e:  # noqa: BLE001
+        st.error("Couldn't reach BigQuery for Article Visibility.")
+        st.exception(e)
+        return
+
     st.markdown(
-        '<div class="tbl-wrap"><div class="tbl-title">URL-Level Error '
-        "Reconciliation — All Three Sources (example)</div>"
-        '<table class="report"><thead><tr><th>URL</th><th>GSC Status</th>'
-        "<th>CF Log Status</th><th>Origin Status</th><th>Layer</th>"
-        "<th>Action</th></tr></thead>"
-        f"<tbody>{rows}</tbody></table></div>",
+        '<div class="page-title">Article Visibility — Are Our Articles Ranking?</div>'
+        '<div class="page-sub">Papers under /lp/ (excluded from Reports 1-6), counting only '
+        "queries that are actually about the paper. Last 30 days.</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<div class="action-box">'
+        '<div class="label">Best-effort filter</div>'
+        "<p>Most /lp/ search traffic is title collisions (a query that happens to share a word "
+        "with a paper, not a search for it). A query counts as on-topic here when it shares 2+ "
+        "meaningful words with the article's URL title. That removes most collisions, but not "
+        "papers whose real title contains the colliding terms. Page titles from the Phase 2 crawl "
+        "will make this exact.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    pct = round(100 * stats["relevant_clicks"] / max(stats["total_clicks"], 1))
+    st.markdown(
+        '<div class="scorecards">'
+        f'<div class="card"><div class="card-label">Articles With Impressions</div><div class="card-val">{stats["articles"]:,}</div></div>'
+        f'<div class="card"><div class="card-label">With On-Topic Queries</div><div class="card-val">{stats["with_relevant"]:,}</div></div>'
+        f'<div class="card"><div class="card-label">On-Topic, Avg Position ≤ 10</div><div class="card-val" style="color:var(--green)">{stats["top10"]:,}</div></div>'
+        f'<div class="card"><div class="card-label">Articles With On-Topic Clicks</div><div class="card-val" style="color:var(--green)">{stats["with_clicks"]:,}</div></div>'
+        f'<div class="card"><div class="card-label">On-Topic Clicks</div><div class="card-val">{stats["relevant_clicks"]:,}</div></div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f'{stats["relevant_impressions"]:,} of {stats["total_impressions"]:,} impressions and '
+        f'{stats["relevant_clicks"]:,} of {stats["total_clicks"]:,} clicks ({pct}%) come from '
+        "on-topic queries; the rest is title-collision noise."
+    )
+
+    st.markdown(
+        '<div class="tbl-wrap"><div class="tbl-title">Top Articles by On-Topic Clicks</div>'
+        f"{render_article_table(df)}</div>",
         unsafe_allow_html=True,
     )
 
@@ -1099,3 +1300,5 @@ with tabs[6]:
     crawl_health_tab()
 with tabs[7]:
     error_reconciliation_tab()
+with tabs[8]:
+    article_visibility_tab()

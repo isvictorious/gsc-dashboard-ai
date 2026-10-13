@@ -1,0 +1,12 @@
+[
+  {"name":"EdgeStartTimestamp","type":"TIMESTAMP"},
+  {"name":"RayID","type":"STRING"},
+  {"name":"ClientRequestHost","type":"STRING"},
+  {"name":"ClientRequestURI","type":"STRING"},
+  {"name":"ClientRequestMethod","type":"STRING"},
+  {"name":"ClientRequestUserAgent","type":"STRING"},
+  {"name":"ClientIP","type":"STRING"},
+  {"name":"EdgeResponseStatus","type":"INTEGER"},
+  {"name":"OriginResponseStatus","type":"INTEGER"},
+  {"name":"CacheCacheStatus","type":"STRING"}
+]

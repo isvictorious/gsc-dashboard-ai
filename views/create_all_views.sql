@@ -329,32 +329,133 @@ FROM zombie_pages
 ORDER BY page_category, ABS(performance_indicator) DESC;
 
 -- ============================================================================
--- View 7: Crawl Health (Stub)
--- Placeholder for Cloudflare log integration
+-- View 7: Crawl Health
+-- What bots with a "Googlebot" user-agent actually received from the site,
+-- from Cloudflare Logpush (searchconsole.cloudflare_logs).
+--
+-- is_verified_googlebot: user-agent strings are trivially spoofed (scanners
+-- probing for /.env files routinely claim to be Googlebot), so each request's
+-- IP is checked against Google's published ranges
+-- (searchconsole.googlebot_ip_ranges, see scripts/refresh_googlebot_ranges.sh).
+--
+-- handled_by: 'edge' = Cloudflare answered without contacting the origin
+-- (OriginResponseStatus = 0: cache hit, WAF block, rate limit);
+-- 'origin' = the DeepDyve app produced the response.
 -- ============================================================================
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_crawl_health` AS
 SELECT
-    CURRENT_DATE() AS data_date,
-    CAST(NULL AS STRING) AS url,
-    CAST(NULL AS INT64) AS status_code,
-    CAST(NULL AS STRING) AS bot_type,
-    CAST(NULL AS INT64) AS crawl_count,
-    CAST(NULL AS FLOAT64) AS avg_response_time_ms,
-    CAST(NULL AS STRING) AS cache_status,
-    'Cloudflare log integration pending' AS status_message
-FROM (SELECT 1) WHERE FALSE;
+    DATE(EdgeStartTimestamp) AS data_date,
+    ClientRequestURI AS url_path,
+    -- First path segment (/lp, /browse, /journals ...) for grouping
+    REGEXP_EXTRACT(ClientRequestURI, r'^(/[^/?]*)') AS url_section,
+    EdgeResponseStatus AS status_code,
+    IF(IFNULL(OriginResponseStatus, 0) = 0, 'edge', 'origin') AS handled_by,
+    CacheCacheStatus AS cache_status,
+    EXISTS (
+        SELECT 1 FROM `deepdyve-491623.searchconsole.googlebot_ip_ranges` r
+        WHERE NET.IP_IN_NET(ClientIP, r.cidr)
+    ) AS is_verified_googlebot,
+    COUNT(*) AS crawl_count
+FROM `deepdyve-491623.searchconsole.cloudflare_logs`
+WHERE ClientIP IS NOT NULL AND ClientIP != ''
+GROUP BY data_date, url_path, url_section, status_code, handled_by, cache_status, is_verified_googlebot;
 
 -- ============================================================================
--- View 8: Error Reconciliation (Stub)
--- Placeholder for GSC + Cloudflare error comparison
+-- View 8: Error Reconciliation
+-- Where does each crawl error come from? Classifies every 4xx/5xx served to
+-- "Googlebot" requests as one of:
+--   Spoofed bot (ignore)   - fake Googlebot (IP not Google's); blocking it is correct
+--   Cloudflare rate limit  - real Googlebot got HTTP 429 from the edge
+--   Cloudflare edge block  - real Googlebot blocked at the edge (WAF / Bot Fight)
+--   Origin error           - the DeepDyve app returned the error itself
+--
+-- Scope note: this reconciles Cloudflare edge vs origin. Comparing against
+-- GSC's own reported statuses needs GSC URL Inspection data
+-- (searchconsole.gsc_url_inspection), which doesn't exist yet.
 -- ============================================================================
 CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_error_reconciliation` AS
 SELECT
-    CURRENT_DATE() AS data_date,
-    CAST(NULL AS STRING) AS url,
-    CAST(NULL AS STRING) AS gsc_status,
-    CAST(NULL AS INT64) AS actual_status_code,
-    CAST(NULL AS STRING) AS error_category,
-    CAST(NULL AS STRING) AS cloudflare_cache_status,
-    'GSC and Cloudflare integration pending' AS status_message
-FROM (SELECT 1) WHERE FALSE;
+    data_date,
+    url_path,
+    url_section,
+    status_code,
+    cache_status,
+    is_verified_googlebot,
+    CASE
+        WHEN NOT is_verified_googlebot THEN 'Spoofed bot (ignore)'
+        WHEN handled_by = 'edge' AND status_code = 429 THEN 'Cloudflare rate limit'
+        WHEN handled_by = 'edge' THEN 'Cloudflare edge block'
+        ELSE 'Origin error'
+    END AS error_category,
+    crawl_count
+FROM `deepdyve-491623.searchconsole.v_crawl_health`
+WHERE status_code >= 400;
+
+-- ============================================================================
+-- View 9: Article Visibility
+-- Are /lp/ articles ranking for queries that are actually ABOUT the article?
+-- (Reports 1-6 exclude /lp/ entirely; see CLAUDE.md "Report 9".)
+--
+-- Relevance filter (best-effort until Phase 2 supplies real page titles):
+-- the URL slug is the paper's title, so a query counts as "relevant" when it
+-- shares 2+ meaningful words (4+ letters, minus a few filler words) with the
+-- slug. Topic-mismatch noise ("xxxxsex" -> a sex-chromosome paper) shares at
+-- most one word, so it falls out. Measured over 30 days: pairs sharing 0-1
+-- words hold ~83% of clicks and are almost all noise.
+-- Known limits: a title that legitimately contains the colliding terms still
+-- passes (e.g. a paper really about porn consumption); non-Latin scripts are
+-- matched by letters/digits only, with no stemming or translation.
+-- Per-article, last 30 days. total_* = all queries, relevant_* = filtered.
+-- ============================================================================
+CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_article_visibility` AS
+WITH pairs AS (
+    SELECT
+        url,
+        query,
+        SUM(impressions) AS impressions,
+        SUM(clicks) AS clicks,
+        (SUM(sum_position) / NULLIF(SUM(impressions), 0)) + 1 AS avg_position
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+    WHERE query IS NOT NULL
+        AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        AND url LIKE '%/lp/%'
+    GROUP BY url, query
+),
+words AS (
+    SELECT
+        *,
+        -- Slug = title part of /lp/<publisher>/<title-words>-<10-char id>
+        REGEXP_EXTRACT(url, r'/lp/[^/]+/(.+)-[A-Za-z0-9_]{10}$') AS slug
+    FROM pairs
+),
+scored AS (
+    SELECT
+        *,
+        (
+            SELECT COUNT(DISTINCT w)
+            FROM UNNEST(REGEXP_EXTRACT_ALL(LOWER(query), r'[\p{L}\p{N}]+')) AS w
+            WHERE LENGTH(w) >= 4
+                AND w NOT IN ('with', 'from', 'that', 'this', 'have', 'what', 'pdf', 'free', 'download')
+                AND w IN UNNEST(SPLIT(LOWER(slug), '-'))
+        ) AS shared_words
+    FROM words
+)
+SELECT
+    url,
+    REGEXP_EXTRACT(url, r'https?://[^/]+(.+)') AS url_path,
+    -- Publisher + title slug, for readable display
+    REGEXP_EXTRACT(url, r'/lp/(.+)$') AS article,
+    SUM(impressions) AS total_impressions,
+    SUM(clicks) AS total_clicks,
+    COUNT(*) AS total_queries,
+    SUM(IF(shared_words >= 2, impressions, 0)) AS relevant_impressions,
+    SUM(IF(shared_words >= 2, clicks, 0)) AS relevant_clicks,
+    COUNTIF(shared_words >= 2) AS relevant_queries,
+    ROUND(SAFE_DIVIDE(
+        SUM(IF(shared_words >= 2, avg_position * impressions, 0)),
+        SUM(IF(shared_words >= 2, impressions, 0))), 1) AS relevant_avg_position,
+    -- Best on-topic query: most clicks, then impressions
+    ARRAY_AGG(IF(shared_words >= 2, query, NULL) IGNORE NULLS
+              ORDER BY clicks DESC, impressions DESC LIMIT 1)[SAFE_OFFSET(0)] AS top_relevant_query
+FROM scored
+GROUP BY url;

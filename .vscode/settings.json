@@ -1,0 +1,27 @@
+{
+  // Project-level overrides. The user-level defaults are tuned for WordPress/PHP
+  // work (tabs, Prettier on save), which would corrupt Python and SQL here.
+  "[python]": {
+    "editor.insertSpaces": true,
+    "editor.tabSize": 4,
+    "editor.detectIndentation": false,
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    // Off on purpose: a first format-on-save would rewrite all of app.py
+    "editor.formatOnSave": false,
+    "editor.formatOnPaste": false
+  },
+  "[sql]": {
+    "editor.insertSpaces": true,
+    "editor.tabSize": 4,
+    "editor.detectIndentation": false,
+    "editor.formatOnSave": false,
+    "editor.formatOnPaste": false
+  },
+  "[markdown]": {
+    "editor.insertSpaces": true,
+    "editor.tabSize": 2
+  },
+  "files.exclude": {
+    "**/__pycache__": true
+  }
+}
