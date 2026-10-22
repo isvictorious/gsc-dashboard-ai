@@ -2,7 +2,7 @@
 # ============================================================================
 # Deploy All Views to BigQuery
 # ============================================================================
-# This script deploys all 8 report views to the BigQuery dataset
+# This script deploys all report views to the BigQuery dataset
 # Run from the repository root: ./scripts/deploy_views.sh
 # ============================================================================
 

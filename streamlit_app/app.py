@@ -934,7 +934,8 @@ def load_crawl_cache_mix() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600)
-def load_crawl_sections() -> pd.DataFrame:
+def load_crawl_sections(limit: int | None = 12) -> pd.DataFrame:
+    """limit=None returns every section (used for the CSV export)."""
     client = get_bq_client()
     return client.query(
         f"""
@@ -948,7 +949,7 @@ def load_crawl_sections() -> pd.DataFrame:
         WHERE is_verified_googlebot
         GROUP BY url_section
         ORDER BY requests DESC
-        LIMIT 12
+        {f"LIMIT {limit}" if limit else ""}
         """
     ).to_dataframe()
 
@@ -966,7 +967,8 @@ def load_error_categories() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600)
-def load_error_detail() -> pd.DataFrame:
+def load_error_detail(limit: int | None = 25) -> pd.DataFrame:
+    """limit=None returns every group (used for the CSV export)."""
     client = get_bq_client()
     return client.query(
         f"""
@@ -981,7 +983,7 @@ def load_error_detail() -> pd.DataFrame:
         WHERE error_category != 'Spoofed bot (ignore)'
         GROUP BY error_category, url_section, status_code
         ORDER BY requests DESC
-        LIMIT 25
+        {f"LIMIT {limit}" if limit else ""}
         """
     ).to_dataframe()
 
@@ -1095,6 +1097,140 @@ STATUS_COLORS = {
 CACHE_COLORS = {"hit": "--green", "dynamic": "--accent", "bypass": "--amber", "miss": "--amber"}
 
 
+REDIRECT_VIEW = f"`{PROJECT}.{DATASET}.v_redirect_analysis`"
+
+
+@st.cache_data(ttl=3600)
+def load_redirect_patterns() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"""
+        SELECT source, url_pattern, redirect_type,
+               SUM(crawl_count) AS requests, COUNT(DISTINCT url_path) AS urls
+        FROM {REDIRECT_VIEW}
+        GROUP BY source, url_pattern, redirect_type
+        ORDER BY requests DESC
+        """
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=3600)
+def load_redirect_daily() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"""
+        SELECT data_date, redirect_type AS series, SUM(crawl_count) AS n
+        FROM {REDIRECT_VIEW}
+        GROUP BY data_date, series
+        """
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=3600)
+def load_redirect_urls(url_pattern: str | None = None, limit: int | None = 200) -> pd.DataFrame:
+    """One row per redirecting URL (the drill-down and the full CSV export).
+
+    url_pattern=None covers every pattern; limit=None returns all rows.
+    """
+    client = get_bq_client()
+    job = client.query(
+        f"""
+        SELECT url_path, host, redirect_type, source, url_pattern, cache_status,
+               SUM(crawl_count) AS requests,
+               COUNT(DISTINCT data_date) AS days_seen,
+               MIN(data_date) AS first_seen, MAX(data_date) AS last_seen
+        FROM {REDIRECT_VIEW}
+        WHERE @pattern IS NULL OR url_pattern = @pattern
+        GROUP BY url_path, host, redirect_type, source, url_pattern, cache_status
+        ORDER BY requests DESC
+        {f"LIMIT {limit}" if limit else ""}
+        """,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("pattern", "STRING", url_pattern)]
+        ),
+    )
+    return job.to_dataframe()
+
+
+REDIRECT_COLORS = {
+    "301 Permanent": "--accent",
+    "308 Permanent": "--green",
+    "302 Temporary": "--amber",
+    "307 Temporary": "--red",
+}
+
+
+def csv_download(df: pd.DataFrame, filename: str, label: str, key: str) -> None:
+    st.download_button(label, df.to_csv(index=False).encode("utf-8"), file_name=filename, mime="text/csv", key=key)
+
+
+def redirect_breakdown():
+    """Crawl Health drill-down: what the 3xx responses are, who produced them, and the URLs behind them."""
+    patterns = load_redirect_patterns()
+    if patterns.empty:
+        return
+    total = int(patterns["requests"].sum())
+    by_source = patterns.groupby("source")["requests"].sum()
+    origin_share = 100 * by_source.get("Origin app", 0) / total
+    edge_share = 100 * by_source.get("Cloudflare edge", 0) / total
+    top = patterns.iloc[0]
+
+    st.markdown(
+        '<div class="page-title" style="margin-top:28px;">Redirect Breakdown — What Are These 3xx Responses?</div>'
+        '<div class="page-sub">Googlebot should reach articles directly. Each redirect is a wasted crawl, '
+        "and a sign that links point at non-final URLs.</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="action-box"><div class="label">Who is redirecting?</div>'
+        f"<p><b>{origin_share:.0f}%</b> of verified redirects ({total:,} total) are returned by the "
+        f"<b>DeepDyve app</b> itself; <b>{edge_share:.1f}%</b> by Cloudflare rules. The largest single group is "
+        f"<code>{html.escape(top['url_pattern'])}</code> answering <b>{html.escape(top['redirect_type'])}</b> "
+        f"({int(top['requests']):,} requests).</p>"
+        "<p><b>App redirects</b> cannot be fixed in Cloudflare: find the app rule that issues them, then link "
+        "internally and in the sitemap to the final URL. <b>Cloudflare redirects</b> come from Redirect Rules, "
+        "Page Rules or Bulk Redirects. Check Rules &rarr; Redirect Rules. Spot-check a sample URL in GSC "
+        "URL Inspection to see the final URL Google lands on.</p></div>",
+        unsafe_allow_html=True,
+    )
+
+    daily_trend_chart(load_redirect_daily(), "Daily Redirects Served to Verified Googlebot — by Type",
+                      REDIRECT_COLORS, "redirect_range")
+
+    rows = "".join(
+        f'<tr><td class="url">{html.escape(r.url_pattern)}</td>'
+        f'<td class="mono">{html.escape(r.redirect_type)}</td>'
+        f'<td style="color:{"var(--amber)" if r.source == "Origin app" else "var(--accent)"};font-weight:600">{html.escape(r.source)}</td>'
+        f'<td class="mono">{int(r.requests):,}</td><td class="mono">{100 * r.requests / total:.1f}%</td>'
+        f'<td class="mono">{int(r.urls):,}</td></tr>'
+        for r in patterns.head(15).itertuples()
+    )
+    st.markdown(
+        '<div class="tbl-wrap"><div class="tbl-title">Redirects by URL Pattern, Type and Source</div>'
+        '<table class="report"><thead><tr><th>URL pattern</th><th>Type</th><th>Source</th>'
+        "<th>Requests</th><th>Share</th><th>Unique URLs</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+    csv_download(patterns, "redirect_patterns.csv", "Download pattern summary (CSV)", "dl_redirect_patterns")
+
+    with st.expander("Drill down: the URLs behind a redirect pattern"):
+        choice = st.selectbox("URL pattern", ["All patterns"] + patterns["url_pattern"].drop_duplicates().tolist(),
+                              key="redirect_pattern")
+        pattern = None if choice == "All patterns" else choice
+        urls = load_redirect_urls(pattern, 200)
+        st.caption("Top 200 URLs by requests. Use the full export below for every URL.")
+        st.dataframe(urls, hide_index=True, use_container_width=True)
+        if st.button("Prepare full CSV for this selection", key="redirect_prepare"):
+            full = load_redirect_urls(pattern, None)
+            st.session_state["redirect_full"] = (choice, full)
+        prepared = st.session_state.get("redirect_full")
+        if prepared and prepared[0] == choice:
+            name = "redirects_all.csv" if pattern is None else "redirects_" + "".join(
+                ch if ch.isalnum() else "_" for ch in choice).strip("_") + ".csv"
+            csv_download(prepared[1], name, f"Download {len(prepared[1]):,} URLs (CSV)", "dl_redirect_full")
+
+
 def crawl_health_tab():
     summary = load_crawl_summary().iloc[0]
     if not summary["total_requests"]:
@@ -1171,6 +1307,9 @@ def crawl_health_tab():
         f"<tbody>{rows}</tbody></table></div>",
         unsafe_allow_html=True,
     )
+    csv_download(load_crawl_sections(None), "crawl_health_sections.csv", "Download all sections (CSV)", "dl_sections")
+
+    redirect_breakdown()
 
 
 ERROR_CATEGORY_INFO = {
@@ -1238,6 +1377,7 @@ def error_reconciliation_tab():
         f"<tbody>{rows}</tbody></table></div>",
         unsafe_allow_html=True,
     )
+    csv_download(load_error_detail(None), "error_reconciliation.csv", "Download all error groups (CSV)", "dl_errors")
 
 
 @st.cache_data(ttl=86400)  # 24h - GSC data updates ~daily, no reason to re-query more often
