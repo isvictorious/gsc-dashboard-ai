@@ -986,6 +986,71 @@ def load_error_detail() -> pd.DataFrame:
     ).to_dataframe()
 
 
+@st.cache_data(ttl=3600)
+def load_crawl_daily() -> pd.DataFrame:
+    """Daily verified-Googlebot requests per status bucket (same buckets as the status donut)."""
+    client = get_bq_client()
+    return client.query(
+        f"""
+        SELECT
+            data_date,
+            CASE
+                WHEN status_code BETWEEN 200 AND 299 THEN '2xx OK'
+                WHEN status_code BETWEEN 300 AND 399 THEN '3xx Redirect'
+                WHEN status_code = 403 THEN '403 Forbidden'
+                WHEN status_code = 404 THEN '404 Not found'
+                WHEN status_code = 429 THEN '429 Rate limited'
+                ELSE 'Other'
+            END AS series,
+            SUM(crawl_count) AS n
+        FROM `{PROJECT}.{DATASET}.v_crawl_health`
+        WHERE is_verified_googlebot
+        GROUP BY data_date, series
+        """
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=3600)
+def load_error_daily() -> pd.DataFrame:
+    """Daily errors per layer (spoofed bots excluded, as in the detail table)."""
+    client = get_bq_client()
+    return client.query(
+        f"""
+        SELECT data_date, error_category AS series, SUM(crawl_count) AS n
+        FROM `{PROJECT}.{DATASET}.v_error_reconciliation`
+        WHERE error_category != 'Spoofed bot (ignore)'
+        GROUP BY data_date, series
+        """
+    ).to_dataframe()
+
+
+# st.line_chart needs literal colors; these mirror the CSS variables used by the donuts.
+VAR_HEX = {"--green": "#34d399", "--amber": "#fbbf24", "--red": "#f87171", "--accent": "#4e8cff", "--text-dim": "#8b8fa3"}
+
+
+def daily_trend_chart(df: pd.DataFrame, title: str, colors: dict, key: str) -> None:
+    """Daily line chart with a range picker, styled like the Brand report's Daily Click Trend.
+
+    df: data_date, series, n. colors: series label -> CSS variable name.
+    """
+    if df.empty:
+        return
+    days = st.radio("Range", ["All", "Last 90 days", "Last 30 days"], horizontal=True, key=key)
+    df = df.assign(data_date=pd.to_datetime(df["data_date"]))
+    if days != "All":
+        cutoff = df["data_date"].max() - pd.Timedelta(days=int(days.split()[1]) - 1)
+        df = df[df["data_date"] >= cutoff]
+    pivot = df.pivot_table(index="data_date", columns="series", values="n", aggfunc="sum", fill_value=0)
+    line_colors = [VAR_HEX[colors.get(c, "--text-dim")] for c in pivot.columns]
+    st.markdown(
+        '<div class="tbl-wrap" style="padding:16px;">'
+        f'<div class="tbl-title" style="padding:0 0 12px;">{html.escape(title)}</div>',
+        unsafe_allow_html=True,
+    )
+    st.line_chart(pivot, height=260, color=line_colors)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def donut_chart(title: str, segments: list, center_val: str, center_lbl: str) -> str:
     """segments: list of (label, pct, color_var, detail) tuples, pct summing to ~100."""
     stops = []
@@ -1089,6 +1154,8 @@ def crawl_health_tab():
     )
     st.markdown(f'<div class="chart-row">{status_donut}{cache_donut}</div>', unsafe_allow_html=True)
 
+    daily_trend_chart(load_crawl_daily(), "Daily Verified Googlebot Requests by Status", STATUS_COLORS, "crawl_range")
+
     sections = load_crawl_sections()
     rows = "".join(
         f'<tr><td class="url">{html.escape(r.url_section)}</td>'
@@ -1147,6 +1214,11 @@ def error_reconciliation_tab():
         f'<div class="card"><div class="card-label">Spoofed Bot Errors (ignore)</div><div class="card-val">{req("Spoofed bot (ignore)"):,}</div></div>'
         "</div>",
         unsafe_allow_html=True,
+    )
+
+    daily_trend_chart(
+        load_error_daily(), "Daily Errors Served to Verified Googlebot — by Layer",
+        {k: v[0][4:-1] for k, v in ERROR_CATEGORY_INFO.items()}, "error_range",
     )
 
     detail = load_error_detail()
