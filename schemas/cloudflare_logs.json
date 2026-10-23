@@ -8,5 +8,8 @@
   {"name":"ClientIP","type":"STRING"},
   {"name":"EdgeResponseStatus","type":"INTEGER"},
   {"name":"OriginResponseStatus","type":"INTEGER"},
-  {"name":"CacheCacheStatus","type":"STRING"}
+  {"name":"CacheCacheStatus","type":"STRING"},
+  {"name":"ClientRequestReferer","type":"STRING"},
+  {"name":"ClientRequestScheme","type":"STRING"},
+  {"name":"ResponseHeaders","type":"STRING"}
 ]
