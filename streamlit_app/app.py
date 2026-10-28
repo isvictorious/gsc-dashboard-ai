@@ -1135,13 +1135,13 @@ def load_redirect_urls(url_pattern: str | None = None, limit: int | None = 200) 
     client = get_bq_client()
     job = client.query(
         f"""
-        SELECT url_path, host, redirect_type, source, url_pattern, cache_status,
+        SELECT url_path, destination, change_type, host, redirect_type, source, url_pattern, cache_status,
                SUM(crawl_count) AS requests,
                COUNT(DISTINCT data_date) AS days_seen,
                MIN(data_date) AS first_seen, MAX(data_date) AS last_seen
         FROM {REDIRECT_VIEW}
         WHERE @pattern IS NULL OR url_pattern = @pattern
-        GROUP BY url_path, host, redirect_type, source, url_pattern, cache_status
+        GROUP BY url_path, destination, change_type, host, redirect_type, source, url_pattern, cache_status
         ORDER BY requests DESC
         {f"LIMIT {limit}" if limit else ""}
         """,
@@ -1150,6 +1150,37 @@ def load_redirect_urls(url_pattern: str | None = None, limit: int | None = 200) 
         ),
     )
     return job.to_dataframe()
+
+
+@st.cache_data(ttl=3600)
+def load_redirect_changes() -> pd.DataFrame:
+    """What each redirect changes (needs the Location header, logged since the Logpush update)."""
+    client = get_bq_client()
+    return client.query(
+        f"""
+        SELECT change_type, url_pattern,
+               SUM(crawl_count) AS requests, COUNT(DISTINCT url_path) AS urls,
+               MIN(IF(destination IS NOT NULL, data_date, NULL)) OVER () AS logged_since,
+               ARRAY_AGG(url_path ORDER BY crawl_count DESC LIMIT 1)[OFFSET(0)] AS example_from,
+               ARRAY_AGG(destination IGNORE NULLS ORDER BY crawl_count DESC LIMIT 1)[SAFE_OFFSET(0)] AS example_to
+        FROM {REDIRECT_VIEW}
+        GROUP BY change_type, url_pattern, data_date, destination
+        """
+    ).to_dataframe()
+
+
+REDIRECT_FIXES = {
+    "Query parameters added": "The app appends default paging (e.g. ?rows=10&start=0). Link to the URL with the parameters, or serve the default view without redirecting.",
+    "Publisher or title in /lp URL changed": "Links use a legacy publisher name or title in /lp URLs. Update the sitemap and internal links to the canonical /lp URL.",
+    "Double slash removed": "Something generates // in /browse links (sitemap or internal links). Fix the link generator.",
+    "Trailing slash changed": "Link to the form with the trailing slash (e.g. /min/ ), so no redirect is needed.",
+    "Short link expanded to full article": "Link to the full /lp/<publisher>/<title>-<id> URL instead of /lp/doc/<id>.",
+    "/doc-view link moved to /lp article": "Retire /doc-view?docId= links in feeds and sitemaps; link to the /lp article.",
+    "www / apex host switch": "Link to the canonical host (www or apex, whichever the site redirects to).",
+    "Different site": "The target is on another domain. Check it is intended.",
+    "Other change": "Review the example below and decide whether the source link can point at the target.",
+    "Destination not logged": "Redirect target is only recorded since the Logpush update; older rows have none.",
+}
 
 
 REDIRECT_COLORS = {
@@ -1196,6 +1227,40 @@ def redirect_breakdown():
 
     daily_trend_chart(load_redirect_daily(), "Daily Redirects Served to Verified Googlebot — by Type",
                       REDIRECT_COLORS, "redirect_range")
+
+    changes = load_redirect_changes()
+    if not changes.empty:
+        grouped = (
+            changes.groupby(["change_type", "url_pattern"], as_index=False)
+            .agg(requests=("requests", "sum"), urls=("urls", "sum"),
+                 example_from=("example_from", "first"), example_to=("example_to", "first"))
+            .sort_values("requests", ascending=False)
+        )
+        known = grouped[grouped["change_type"] != "Destination not logged"]
+        logged_since = changes["logged_since"].dropna().min()
+        if known.empty:
+            st.caption("Redirect targets have not been logged yet.")
+        else:
+            crows = "".join(
+                f'<tr><td style="font-weight:600">{html.escape(r.change_type)}</td>'
+                f'<td class="url">{html.escape(r.url_pattern)}</td>'
+                f'<td class="mono">{int(r.requests):,}</td>'
+                f'<td class="url">{html.escape(str(r.example_from))}<br>&rarr; {html.escape(str(r.example_to))}</td>'
+                f'<td style="font-size:12px">{html.escape(REDIRECT_FIXES.get(r.change_type, ""))}</td></tr>'
+                for r in known.head(12).itertuples()
+            )
+            st.markdown(
+                '<div class="tbl-wrap"><div class="tbl-title">What Each Redirect Changes — and How to Fix It</div>'
+                '<table class="report"><thead><tr><th>What changes</th><th>URL pattern</th><th>Requests</th>'
+                f"<th>Example (from &rarr; to)</th><th>How to fix</th></tr></thead><tbody>{crows}</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
+            unlogged = int(grouped.loc[grouped["change_type"] == "Destination not logged", "requests"].sum())
+            st.caption(
+                f"Targets are logged from {logged_since} onward. {unlogged:,} older redirects "
+                "have no recorded target and are not in this table."
+            )
+        csv_download(grouped, "redirect_changes.csv", "Download what-changes summary (CSV)", "dl_redirect_changes")
 
     rows = "".join(
         f'<tr><td class="url">{html.escape(r.url_pattern)}</td>'
