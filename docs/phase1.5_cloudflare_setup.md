@@ -45,8 +45,9 @@ Cloudflare's native BigQuery destination needs no third-party log router
    out the column-naming rule; Cloudflare's field names worked on the first try.
 3. **Cloudflare dashboard** (needs zone admin): Analytics & Logs → Logpush →
    Create job → Google BigQuery → project / dataset / table above, paste the
-   JSON key, dataset **HTTP requests**, select exactly the 10 fields in the
-   schema file (extra fields fail the insert), timestamp format **RFC3339**,
+   JSON key, dataset **HTTP requests**, select exactly the fields in the
+   schema file (extra fields fail the insert; 13 since 2026-10-28, see
+   "Redirect diagnosis fields" below), timestamp format **RFC3339**,
    filter `ClientRequestUserAgent` contains `Googlebot`.
 4. **Googlebot IP ranges:** `./scripts/refresh_googlebot_ranges.sh` (re-run
    about monthly; Google updates the list).
@@ -112,6 +113,28 @@ Logpush's HTTP Requests dataset, not the GraphQL API.
   "Blocked due to access forbidden" pages are Cloudflare blocking Googlebot
   (fixable by changing one WAF/Bot Fight Mode rule) or the origin app
   itself returning 403 for unrelated reasons (a different, code-level fix).
+
+## Redirect diagnosis fields (added 2026-10-28)
+
+Three columns were added to `cloudflare_logs` and to the Logpush job so the
+redirect target could be diagnosed: `ClientRequestReferer`, `ClientRequestScheme`
+and `ResponseHeaders` (custom field: response header `location`, stored as a
+JSON string such as `{"location":"/browse/...?rows=10&start=0"}`).
+
+Order matters: add the BigQuery columns first (`ALTER TABLE ... ADD COLUMN IF
+NOT EXISTS`), then have someone with zone admin edit the Logpush job. Only new
+rows get the fields. The job filter stays `ClientRequestUserAgent contains
+Googlebot` (a single condition; adding AND/OR changes what is logged).
+
+What it showed (first hours of data): roughly all redirects Googlebot gets are
+issued by the DeepDyve app, not Cloudflare. It cleans up URLs Googlebot reaches
+in a non-final form: `/browse` pages get `?rows=10&start=0` appended (307),
+`/lp/` URLs with a legacy publisher name are rewritten (e.g. `ou-press` to
+`oxford-university-press`, 308), `/doc-view?docId=` links move to `/lp/`
+articles (301), `/browse//` double slashes are removed (308), and `/min?` gets a
+trailing slash (301). `v_redirect_analysis` exposes `destination` and
+`change_type`; the Crawl Health tab shows them with how-to-fix advice and a CSV.
+Referer is mostly empty for Googlebot (about 9% of rows), so it is a minor help.
 
 ## Still open
 
