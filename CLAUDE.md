@@ -136,6 +136,11 @@ WordPress MCP → automated fixes (Phase 3)
 8. Error Reconciliation — edge vs origin error source (live; GSC-status comparison pending gsc_url_inspection)
 9. Article Visibility — are `/lp/` articles ranking for relevant queries,
    separate from academic-title noise (live, best-effort — see above)
+10. Crawl & Index Coverage — daily distinct URLs crawled by verified Googlebot
+   (Cloudflare logs) vs. distinct URLs shown in search (GSC impressions), plus
+   crawled-but-not-shown URL list. Google exports no daily indexed-page count,
+   so "shown in search" is a floor, not true index size; true coverage needs
+   the URL Inspection sampler (gsc_url_inspection, not built).
 
 ## Update Workflow
 
