@@ -105,6 +105,7 @@ REPORTS = [
     "7 — Crawl Health",
     "8 — Error Reconciliation",
     "9 — Article Visibility",
+    "10 — Crawl & Index Coverage",
 ]
 
 
@@ -1550,6 +1551,108 @@ def article_visibility_tab():
     )
 
 
+@st.cache_data(ttl=3600)
+def load_crawl_index_daily() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"SELECT * FROM `{PROJECT}.{DATASET}.v_crawl_index_daily` ORDER BY data_date"
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=3600)
+def load_crawled_not_surfaced(limit: int | None = 200) -> pd.DataFrame:
+    client = get_bq_client()
+    limit_sql = f"LIMIT {int(limit)}" if limit else ""
+    return client.query(
+        f"""
+        SELECT url_path, url_section, crawls, first_crawled, last_crawled
+        FROM `{PROJECT}.{DATASET}.v_crawled_not_surfaced`
+        ORDER BY crawls DESC
+        {limit_sql}
+        """
+    ).to_dataframe()
+
+
+@st.cache_data(ttl=3600)
+def load_crawled_not_surfaced_total() -> int:
+    client = get_bq_client()
+    row = next(iter(client.query(
+        f"SELECT COUNT(*) AS n FROM `{PROJECT}.{DATASET}.v_crawled_not_surfaced`"
+    ).result()))
+    return int(row.n)
+
+
+def crawl_index_coverage_tab():
+    daily = load_crawl_index_daily()
+    if daily.empty or daily["urls_crawled"].isna().all():
+        st.info("No Cloudflare log data yet.")
+        return
+
+    st.markdown(
+        '<div class="page-title">Crawl & Index Coverage — What Google Fetches vs. What It Shows</div>'
+        '<div class="page-sub">Pages crawled per day come from Cloudflare logs (verified Googlebot only). '
+        "Pages shown per day come from Search Console: URLs with at least one impression.</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="action-box">'
+        '<div class="label">About "indexed" pages</div>'
+        "<p>Google does not publish a daily count of indexed pages through BigQuery or any API. "
+        "<b>Pages shown in search</b> is the closest daily measure: a page that earned an impression is "
+        "indexed, but indexed pages that were never shown are not counted, so treat it as a minimum. "
+        "Crawl numbers are from our server logs and will differ somewhat from Search Console's Crawl Stats report.</p>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # The newest log day is still filling in, so scorecards use complete days only.
+    logged = daily.dropna(subset=["urls_crawled"]).iloc[:-1]
+    latest = logged.iloc[-1]
+    recent = logged.tail(7)
+    surfaced_recent = daily.dropna(subset=["urls_with_impressions"]).tail(7)
+    st.markdown(
+        '<div class="scorecards">'
+        f'<div class="card"><div class="card-label">URLs Crawled ({latest["data_date"]})</div><div class="card-val">{int(latest["urls_crawled"]):,}</div></div>'
+        f'<div class="card"><div class="card-label">Avg URLs Crawled / Day (7d)</div><div class="card-val">{int(recent["urls_crawled"].mean()):,}</div></div>'
+        f'<div class="card"><div class="card-label">Avg Pages Shown / Day (7d)</div><div class="card-val">{int(surfaced_recent["urls_with_impressions"].mean()):,}</div></div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    trend = daily.melt(
+        id_vars="data_date",
+        value_vars=["urls_crawled", "urls_with_impressions"],
+        var_name="series", value_name="n",
+    ).dropna(subset=["n"])
+    trend["series"] = trend["series"].map(
+        {"urls_crawled": "URLs crawled by Googlebot", "urls_with_impressions": "Pages shown in search"}
+    )
+    daily_trend_chart(
+        trend, "Daily Distinct URLs — Crawled vs. Shown in Search",
+        {"URLs crawled by Googlebot": "--accent", "Pages shown in search": "--green"}, "coverage_range",
+    )
+
+    total = load_crawled_not_surfaced_total()
+    df = load_crawled_not_surfaced()
+    rows = "".join(
+        f'<tr><td class="url">{html.escape(r.url_path)}</td><td class="url">{html.escape(str(r.url_section))}</td>'
+        f'<td class="mono">{int(r.crawls):,}</td><td class="mono">{r.last_crawled}</td></tr>'
+        for r in df.itertuples()
+    )
+    st.markdown(
+        f'<div class="tbl-wrap"><div class="tbl-title">Crawled But Not Shown — {total:,} URLs (last 28 days, top {len(df):,} by crawls)</div>'
+        '<table class="report"><thead><tr><th>URL</th><th>Section</th><th>Crawls</th><th>Last Crawled</th></tr></thead>'
+        f"<tbody>{rows}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+    # Full list is 100K+ rows; fetching it on every render stalls the page, so the CSV is capped.
+    export_limit = 10000
+    csv_download(
+        load_crawled_not_surfaced(export_limit), "crawled_not_surfaced.csv",
+        f"Download top {min(total, export_limit):,} URLs by crawls (CSV)", "dl_not_surfaced",
+    )
+
+
 def coming_soon_tab(name: str, note: str = ""):
     st.markdown(f'<div class="page-title">{html.escape(name)}</div>', unsafe_allow_html=True)
     st.markdown(
@@ -1579,3 +1682,5 @@ with tabs[7]:
     error_reconciliation_tab()
 with tabs[8]:
     article_visibility_tab()
+with tabs[9]:
+    crawl_index_coverage_tab()

@@ -562,3 +562,77 @@ FROM (
     GROUP BY data_date, url_path, host, status_code, origin_status, cache_status, destination, is_verified_googlebot
 )
 WHERE is_verified_googlebot;
+
+-- ============================================================================
+-- View 10a: Crawl & Index Coverage (daily)
+-- One row per day: how many distinct URLs verified Googlebot crawled (from
+-- Cloudflare logs) next to how many distinct URLs appeared in Google search
+-- (had at least one impression, from the GSC export).
+--
+-- Google does NOT export a daily "pages indexed" count (GSC bulk export has no
+-- index-coverage table, and the URL Inspection API is per-URL with a ~2,000
+-- calls/day quota). urls_with_impressions is the closest daily proxy: a page
+-- shown in search is indexed, but indexed pages that never get shown are not
+-- counted, so it is a floor, not the true index size.
+--
+-- Query strings are stripped from crawled paths so parameter variants of one
+-- page count once. Days only exist in the logs once Logpush started (2026-10-07).
+-- ============================================================================
+CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_crawl_index_daily` AS
+WITH crawled AS (
+    SELECT
+        data_date,
+        COUNT(DISTINCT SPLIT(url_path, '?')[OFFSET(0)]) AS urls_crawled,
+        SUM(crawl_count) AS total_crawls
+    FROM `deepdyve-491623.searchconsole.v_crawl_health`
+    WHERE is_verified_googlebot
+    GROUP BY data_date
+),
+surfaced AS (
+    SELECT
+        data_date,
+        COUNT(DISTINCT url) AS urls_with_impressions
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+    GROUP BY data_date
+)
+SELECT
+    COALESCE(c.data_date, s.data_date) AS data_date,
+    c.urls_crawled,
+    c.total_crawls,
+    s.urls_with_impressions
+FROM crawled c
+FULL OUTER JOIN surfaced s ON c.data_date = s.data_date;
+
+-- ============================================================================
+-- View 10b: Crawled but not surfaced
+-- URLs verified Googlebot fetched successfully (2xx) in the last 28 days that
+-- earned zero impressions in the same window. Candidates for "crawled, not
+-- indexed" or too low-value to show - NOT confirmed non-indexed (that needs
+-- URL Inspection data). LEFT JOIN so the view works with any impression data.
+-- ============================================================================
+CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_crawled_not_surfaced` AS
+WITH crawled AS (
+    SELECT
+        url_path,
+        REGEXP_EXTRACT(url_path, r'^(/[^/?]*)') AS url_section,
+        SUM(crawl_count) AS crawls,
+        MIN(data_date) AS first_crawled,
+        MAX(data_date) AS last_crawled
+    FROM (
+        SELECT SPLIT(url_path, '?')[OFFSET(0)] AS url_path, data_date, crawl_count
+        FROM `deepdyve-491623.searchconsole.v_crawl_health`
+        WHERE is_verified_googlebot
+            AND status_code BETWEEN 200 AND 299
+            AND data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+    )
+    GROUP BY url_path
+),
+surfaced AS (
+    SELECT DISTINCT REGEXP_EXTRACT(url, r'https?://[^/]+([^?#]*)') AS url_path
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+    WHERE data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 28 DAY)
+)
+SELECT c.url_path, c.url_section, c.crawls, c.first_crawled, c.last_crawled
+FROM crawled c
+LEFT JOIN surfaced s ON c.url_path = s.url_path
+WHERE s.url_path IS NULL;
