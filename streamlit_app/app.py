@@ -106,6 +106,9 @@ REPORTS = [
     "8 — Error Reconciliation",
     "9 — Article Visibility",
     "10 — Crawl & Index Coverage",
+    "11 — URL Churn",
+    "12 — Dropped vs Retained",
+    "13 — Crawl Waste",
 ]
 
 
@@ -1653,6 +1656,225 @@ def crawl_index_coverage_tab():
     )
 
 
+def simple_table(title: str, headers: list, rows: list) -> None:
+    """Report-styled table. rows: lists of already-formatted cell strings (escaped here)."""
+    head = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
+    body = "".join(
+        "<tr>" + "".join(f'<td class="{"url" if i == 0 else "mono"}">{html.escape(str(c))}</td>' for i, c in enumerate(r)) + "</tr>"
+        for r in rows
+    )
+    st.markdown(
+        f'<div class="tbl-wrap"><div class="tbl-title">{html.escape(title)}</div>'
+        f'<table class="report"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def scorecards(cards: list) -> None:
+    """cards: (label, value, optional CSS colour variable) tuples."""
+    html_cards = ""
+    for label, val, color in cards:
+        style = f' style="color:var({color})"' if color else ""
+        html_cards += (
+            f'<div class="card"><div class="card-label">{html.escape(label)}</div>'
+            f'<div class="card-val"{style}>{html.escape(str(val))}</div></div>'
+        )
+    st.markdown(f'<div class="scorecards">{html_cards}</div>', unsafe_allow_html=True)
+
+
+@st.cache_data(ttl=86400)  # 24h - scans the whole GSC export (url + date columns only)
+def load_url_churn() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"SELECT * FROM `{PROJECT}.{DATASET}.v_url_churn_daily` ORDER BY data_date"
+    ).to_dataframe()
+
+
+def url_churn_tab():
+    df = load_url_churn()
+    if df.empty:
+        st.info("No GSC data yet.")
+        return
+    st.markdown(
+        '<div class="page-title">URL Churn — Pages Starting and Stopping Showing in Search</div>'
+        '<div class="page-sub">For every URL, the first and last day it earned an impression in Search Console.</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="action-box"><div class="label">How to read this</div>'
+        "<p><b>New</b> = a URL's first-ever impression day. <b>Went quiet</b> = its last impression day, "
+        "counted only once that was 7+ days ago. This is a proxy for pages entering and leaving search, "
+        "<b>not</b> confirmed indexing changes: a page can go quiet because it lost rankings while staying indexed. "
+        "The export's first day is excluded because every URL looks new then.</p></div>",
+        unsafe_allow_html=True,
+    )
+    df = df.assign(data_date=pd.to_datetime(df["data_date"]))
+    by_day = df.groupby(["data_date", "event"], as_index=False)["urls"].sum()
+    last28 = df[df["data_date"] > df["data_date"].max() - pd.Timedelta(days=28)]
+    new28 = int(last28.loc[last28["event"] == "New", "urls"].sum())
+    quiet28 = int(last28.loc[last28["event"] == "Went quiet", "urls"].sum())
+    scorecards([
+        ("New URLs (last 28 days)", f"{new28:,}", "--green"),
+        ("Went Quiet (last 28 days)", f"{quiet28:,}", "--red"),
+        ("Net", f"{new28 - quiet28:+,}", None),
+    ])
+    trend = by_day.rename(columns={"event": "series", "urls": "n"})
+    daily_trend_chart(trend, "Daily URLs — New vs. Went Quiet", {"New": "--green", "Went quiet": "--red"}, "churn_range")
+
+    sec = last28.pivot_table(index="url_section", columns="event", values="urls", aggfunc="sum", fill_value=0)
+    for col in ("New", "Went quiet"):
+        if col not in sec:
+            sec[col] = 0
+    sec["Net"] = sec["New"] - sec["Went quiet"]
+    sec = sec.sort_values("Went quiet", ascending=False).head(25)
+    simple_table(
+        "By URL Section — last 28 days (top 25 by Went quiet)",
+        ["Section", "New", "Went quiet", "Net"],
+        [[i, f"{int(r['New']):,}", f"{int(r['Went quiet']):,}", f"{int(r['Net']):+,}"] for i, r in sec.iterrows()],
+    )
+    csv_download(by_day, "url_churn_daily.csv", "Download daily churn (CSV)", "dl_churn")
+
+
+@st.cache_data(ttl=86400)  # 24h - scans two 14-day windows of the GSC export
+def load_dropped_vs_retained() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"SELECT * FROM `{PROJECT}.{DATASET}.v_dropped_vs_retained`"
+    ).to_dataframe()
+
+
+def _cohort_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Collapse cohort rows to one line per group; position is re-weighted by impressions."""
+    g = df.assign(pos_x_imp=df["avg_position"] * df["impressions"])
+    out = g.groupby("cohort", as_index=False).agg(
+        urls=("urls", "sum"), impressions=("impressions", "sum"),
+        clicks=("clicks", "sum"), pos_x_imp=("pos_x_imp", "sum"),
+    )
+    out["ctr"] = out["clicks"] / out["impressions"].where(out["impressions"] > 0)
+    out["avg_position"] = out["pos_x_imp"] / out["impressions"].where(out["impressions"] > 0)
+    return out
+
+
+def dropped_vs_retained_tab():
+    df = load_dropped_vs_retained()
+    if df.empty:
+        st.info("No GSC data yet.")
+        return
+    w = df.iloc[0]
+    st.markdown(
+        '<div class="page-title">Dropped vs. Retained — Did the Pages That Vanished Differ?</div>'
+        f'<div class="page-sub">Pages shown {w["base_start"]} to {w["base_end"]} (the peak), split by whether they are still '
+        f'shown {w["cur_start"]} to {w["cur_end"]} (latest 14 days). Figures are each page\'s performance <b>at the peak</b>.</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="action-box"><div class="label">Caveat</div>'
+        "<p><b>Dropped</b> means no longer shown in search, not confirmed de-indexed. That needs URL Inspection data. "
+        "The share is also inflated by normal turnover: long-tail pages are shown on some days and not others, so many URLs seen once at the peak would be missing from any two-week window. "
+        "CTR on low-impression pages is noisy, so compare within the same impression bucket.</p></div>",
+        unsafe_allow_html=True,
+    )
+    overall = _cohort_summary(df).set_index("cohort")
+    dropped, kept = overall.loc["Dropped"] if "Dropped" in overall.index else None, overall.loc["Retained"] if "Retained" in overall.index else None
+    total_urls = int(overall["urls"].sum())
+    scorecards([
+        ("URLs Shown at Peak", f"{total_urls:,}", None),
+        ("Dropped", f"{int(dropped['urls']):,}" if dropped is not None else "0", "--red"),
+        ("Dropped Share", f"{100 * dropped['urls'] / total_urls:.0f}%" if dropped is not None else "0%", "--red"),
+        ("Retained", f"{int(kept['urls']):,}" if kept is not None else "0", "--green"),
+    ])
+
+    def fmt_rows(frame: pd.DataFrame, label_col: str) -> list:
+        return [
+            [r[label_col], r["cohort"], f"{int(r['urls']):,}", f"{int(r['impressions']):,}", f"{int(r['clicks']):,}",
+             "n/a" if pd.isna(r["ctr"]) else f"{100 * r['ctr']:.2f}%",
+             "n/a" if pd.isna(r["avg_position"]) else f"{r['avg_position']:.1f}"]
+            for _, r in frame.iterrows()
+        ]
+
+    headers = ["Group", "Cohort", "URLs", "Impressions", "Clicks", "CTR", "Avg position"]
+    simple_table("Overall (at peak)", headers, fmt_rows(overall.reset_index().assign(group="All URLs"), "group"))
+
+    order = ["1-4", "5-19", "20-99", "100+"]
+    buckets = []
+    for b in order:
+        sub = df[df["baseline_impressions_bucket"] == b]
+        if not sub.empty:
+            buckets.append(_cohort_summary(sub).assign(group=f"{b} impressions at peak"))
+    if buckets:
+        simple_table("By Impressions at Peak", headers, fmt_rows(pd.concat(buckets), "group"))
+
+    sec_totals = df.groupby("url_section")["urls"].sum().sort_values(ascending=False).head(10).index
+    sections = [_cohort_summary(df[df["url_section"] == s]).assign(group=s) for s in sec_totals]
+    simple_table("By URL Section (top 10 by URLs)", headers, fmt_rows(pd.concat(sections), "group"))
+    csv_download(df, "dropped_vs_retained.csv", "Download cohort data (CSV)", "dl_cohorts")
+
+
+# URL kinds that rarely belong in a search index; mirrors v_crawl_waste_daily.
+WASTE_PATTERNS = {"/min asset bundle", "Static file (js/css/images/fonts)", "/doc-view link", "Double slash (//)"}
+
+
+@st.cache_data(ttl=3600)
+def load_crawl_waste() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"SELECT * FROM `{PROJECT}.{DATASET}.v_crawl_waste_daily` ORDER BY data_date"
+    ).to_dataframe()
+
+
+def crawl_waste_tab():
+    df = load_crawl_waste()
+    if df.empty:
+        st.info("No Cloudflare log data yet.")
+        return
+    st.markdown(
+        '<div class="page-title">Crawl Waste — Where Googlebot Spends Its Requests</div>'
+        '<div class="page-sub">Verified Googlebot requests from Cloudflare logs, by kind of URL and how the site answered.</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="action-box"><div class="label">What counts as waste</div>'
+        "<p><b>Waste candidates</b>: <code>/min</code> asset bundles, static files (js, css, images, fonts), "
+        "<code>/doc-view</code> links and double-slash duplicates. Redirects and errors are wasted requests for any URL kind. "
+        "A candidate is worth a look, not automatically blockable: confirm with the site owner before changing robots.txt.</p></div>",
+        unsafe_allow_html=True,
+    )
+    df = df.assign(data_date=pd.to_datetime(df["data_date"]))
+    complete = df[df["data_date"] < df["data_date"].max()]  # newest log day is still filling in
+    week = complete[complete["data_date"] > complete["data_date"].max() - pd.Timedelta(days=7)]
+    total = int(week["crawls"].sum())
+    if total == 0:
+        st.info("No verified Googlebot requests in the last 7 complete days.")
+        return
+    cand = int(week.loc[week["url_pattern"].isin(WASTE_PATTERNS), "crawls"].sum())
+    non_ok = int(week.loc[week["status_class"] != "2xx OK", "crawls"].sum())
+    scorecards([
+        ("Googlebot Requests (7d)", f"{total:,}", None),
+        ("On Waste-Candidate URLs", f"{100 * cand / total:.0f}%", "--amber"),
+        ("Not a 2xx Response", f"{100 * non_ok / total:.0f}%", "--red"),
+    ])
+    trend = (
+        complete.groupby(["data_date", "url_pattern"], as_index=False)["crawls"].sum()
+        .rename(columns={"url_pattern": "series", "crawls": "n"})
+    )
+    daily_trend_chart(
+        trend, "Daily Googlebot Requests by URL Kind",
+        {s: c for s, c in zip(sorted(trend["series"].unique()), ["--accent", "--green", "--amber", "--red", "--text-dim"] * 3)},
+        "waste_range",
+    )
+    by_pattern = week.groupby("url_pattern")["crawls"].sum().sort_values(ascending=False)
+    ok = week[week["status_class"] == "2xx OK"].groupby("url_pattern")["crawls"].sum()
+    simple_table(
+        "Last 7 Complete Days by URL Kind",
+        ["URL kind", "Requests", "Share", "2xx share", "Waste candidate"],
+        [
+            [p, f"{int(n):,}", f"{100 * n / total:.1f}%", f"{100 * ok.get(p, 0) / n:.0f}%", "Yes" if p in WASTE_PATTERNS else "No"]
+            for p, n in by_pattern.items()
+        ],
+    )
+    csv_download(week, "crawl_waste_7d.csv", "Download last 7 days (CSV)", "dl_waste")
+
+
 def coming_soon_tab(name: str, note: str = ""):
     st.markdown(f'<div class="page-title">{html.escape(name)}</div>', unsafe_allow_html=True)
     st.markdown(
@@ -1672,6 +1894,9 @@ REPORT_FUNCS = [
     error_reconciliation_tab,
     article_visibility_tab,
     crawl_index_coverage_tab,
+    url_churn_tab,
+    dropped_vs_retained_tab,
+    crawl_waste_tab,
 ]
 
 # A dropdown instead of st.tabs: the tab strip needs horizontal swiping to reach the

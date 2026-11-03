@@ -636,3 +636,170 @@ SELECT c.url_path, c.url_section, c.crawls, c.first_crawled, c.last_crawled
 FROM crawled c
 LEFT JOIN surfaced s ON c.url_path = s.url_path
 WHERE s.url_path IS NULL;
+
+-- ============================================================================
+-- View 11: URL Churn (first seen / last seen)
+-- Google exports no daily "pages indexed" count, so this derives one signal
+-- from the GSC export: for every URL, the first and last day it earned an
+-- impression. Per day and URL section (/lp, /browse, ...):
+--   'New'        - the URL's first-ever impression day (pages that started showing)
+--   'Went quiet' - the URL's LAST impression day, only for URLs whose last
+--                  impression is 7+ days old (younger ones may just be a gap)
+-- Caveats:
+--   * "Shown in search" is a floor, not true index status. A URL going quiet
+--     can mean it lost rankings, not that it was removed from the index.
+--   * The export's first day is excluded from 'New' (everything is new then).
+--   * A URL that disappears and returns counts once as New and, if it is
+--     quiet again, once as Went quiet at its final day - returns are not tracked.
+-- Cost: scans only the url + data_date columns, but of the whole table. Fine
+-- behind the app's 24h cache; materialize with a scheduled query if it grows.
+-- ============================================================================
+CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_url_churn_daily` AS
+WITH url_span AS (
+    SELECT
+        url,
+        MIN(data_date) AS first_seen,
+        MAX(data_date) AS last_seen
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+    GROUP BY url
+),
+bounds AS (
+    SELECT MIN(data_date) AS export_start, MAX(data_date) AS export_end
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+),
+events AS (
+    SELECT s.url, s.first_seen AS data_date, 'New' AS event
+    FROM url_span s CROSS JOIN bounds b
+    WHERE s.first_seen > b.export_start
+    UNION ALL
+    SELECT s.url, s.last_seen AS data_date, 'Went quiet' AS event
+    FROM url_span s CROSS JOIN bounds b
+    WHERE s.last_seen <= DATE_SUB(b.export_end, INTERVAL 7 DAY)
+)
+SELECT
+    data_date,
+    event,
+    COALESCE(REGEXP_EXTRACT(url, r'https?://[^/]+(/[^/?#]*)'), '/') AS url_section,
+    COUNT(*) AS urls
+FROM events
+GROUP BY data_date, event, url_section;
+
+-- ============================================================================
+-- View 12: Dropped vs Retained cohorts
+-- Takes the URLs that were shown in search around the PEAK and splits them by
+-- whether they are still shown today:
+--   baseline window = the 14 days ending on the day with the most distinct
+--                     URLs shown (last 400 days of data)
+--   current window  = the latest 14 days in the export
+--   Retained = had impressions in the baseline AND the current window
+--   Dropped  = had impressions in the baseline, none in the current window
+-- Metrics are the BASELINE-period performance of each cohort, so "did the
+-- dropped pages already have worse CTR/position before they vanished?" can be
+-- answered. Grouped by URL section and baseline-impression bucket (low-impression
+-- pages are the first to flicker in and out, so compare like for like).
+-- avg_position uses the project formula: sum_position / impressions + 1.
+-- Caveats: Dropped means "no longer shown", not "de-indexed" (needs URL
+-- Inspection). CTR on low-impression URLs is noisy. The window dates are
+-- columns so the dashboard can show exactly what was compared.
+-- ============================================================================
+CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_dropped_vs_retained` AS
+WITH daily AS (
+    SELECT data_date, COUNT(DISTINCT url) AS urls_shown
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+    WHERE data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 400 DAY)
+    GROUP BY data_date
+),
+windows AS (
+    SELECT
+        DATE_SUB(peak.data_date, INTERVAL 13 DAY) AS base_start,
+        peak.data_date AS base_end,
+        DATE_SUB(latest.data_date, INTERVAL 13 DAY) AS cur_start,
+        latest.data_date AS cur_end
+    FROM (SELECT data_date FROM daily ORDER BY urls_shown DESC LIMIT 1) peak
+    CROSS JOIN (SELECT MAX(data_date) AS data_date FROM daily) latest
+),
+baseline AS (
+    SELECT
+        t.url,
+        SUM(t.impressions) AS impressions,
+        SUM(t.clicks) AS clicks,
+        SUM(t.sum_position) AS sum_position
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression` t
+    CROSS JOIN windows w
+    WHERE t.data_date BETWEEN w.base_start AND w.base_end
+    GROUP BY t.url
+),
+current_urls AS (
+    SELECT DISTINCT t.url
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression` t
+    CROSS JOIN windows w
+    WHERE t.data_date BETWEEN w.cur_start AND w.cur_end
+)
+SELECT
+    IF(c.url IS NULL, 'Dropped', 'Retained') AS cohort,
+    COALESCE(REGEXP_EXTRACT(b.url, r'https?://[^/]+(/[^/?#]*)'), '/') AS url_section,
+    CASE
+        WHEN b.impressions < 5 THEN '1-4'
+        WHEN b.impressions < 20 THEN '5-19'
+        WHEN b.impressions < 100 THEN '20-99'
+        ELSE '100+'
+    END AS baseline_impressions_bucket,
+    COUNT(*) AS urls,
+    SUM(b.impressions) AS impressions,
+    SUM(b.clicks) AS clicks,
+    SAFE_DIVIDE(SUM(b.clicks), SUM(b.impressions)) AS ctr,
+    SAFE_DIVIDE(SUM(b.sum_position), SUM(b.impressions)) + 1 AS avg_position,
+    ANY_VALUE(w.base_start) AS base_start,
+    ANY_VALUE(w.base_end) AS base_end,
+    ANY_VALUE(w.cur_start) AS cur_start,
+    ANY_VALUE(w.cur_end) AS cur_end
+FROM baseline b
+LEFT JOIN current_urls c ON b.url = c.url
+CROSS JOIN windows w
+GROUP BY cohort, url_section, baseline_impressions_bucket;
+
+-- ============================================================================
+-- View 13: Crawl Waste (where verified Googlebot spends its requests)
+-- Daily verified-Googlebot requests from Cloudflare logs, bucketed by what
+-- kind of URL was fetched and how the site answered. "Waste candidates" are
+-- URL kinds that rarely belong in a search index: asset bundles (/min), static
+-- files (js/css/images/fonts), /doc-view links, and double-slash duplicates.
+-- Any 3xx/4xx/5xx response is also wasted effort, whatever the URL kind.
+-- Candidate means "worth a look", not "definitely block it": confirm with the
+-- site owner before touching robots.txt. Query strings are stripped for the
+-- bucket and flagged separately (has_query).
+-- ============================================================================
+CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_crawl_waste_daily` AS
+SELECT
+    data_date,
+    CASE
+        WHEN REGEXP_CONTAINS(path, r'^/min([/.]|$)') THEN '/min asset bundle'
+        WHEN REGEXP_CONTAINS(LOWER(path), r'\.(js|css|map|png|jpe?g|gif|svg|ico|webp|woff2?|ttf|eot)$') THEN 'Static file (js/css/images/fonts)'
+        WHEN STARTS_WITH(path, '/doc-view') THEN '/doc-view link'
+        WHEN REGEXP_CONTAINS(path, r'//') THEN 'Double slash (//)'
+        WHEN path IN ('/robots.txt', '/ads.txt', '/favicon.ico') THEN 'robots / ads / favicon'
+        WHEN STARTS_WITH(path, '/lp/') THEN '/lp/ article'
+        WHEN STARTS_WITH(path, '/browse') THEN '/browse journal page'
+        ELSE 'Other pages'
+    END AS url_pattern,
+    CASE
+        WHEN status_code BETWEEN 200 AND 299 THEN '2xx OK'
+        WHEN status_code BETWEEN 300 AND 399 THEN '3xx redirect'
+        WHEN status_code BETWEEN 400 AND 499 THEN '4xx client error'
+        WHEN status_code >= 500 THEN '5xx server error'
+        ELSE 'Other'
+    END AS status_class,
+    has_query,
+    SUM(crawl_count) AS crawls,
+    COUNT(DISTINCT path) AS distinct_urls
+FROM (
+    SELECT
+        data_date,
+        SPLIT(url_path, '?')[OFFSET(0)] AS path,
+        STRPOS(url_path, '?') > 0 AS has_query,
+        status_code,
+        crawl_count
+    FROM `deepdyve-491623.searchconsole.v_crawl_health`
+    WHERE is_verified_googlebot
+)
+GROUP BY data_date, url_pattern, status_class, has_query;
