@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 SEO intelligence pipeline with 4 phases:
-- **Phase 1:** BigQuery SQL queries + views → Streamlit dashboard (10 reports, see below)
+- **Phase 1:** BigQuery SQL queries + views → Streamlit dashboard (13 reports, see below)
 - **Phase 1.5:** Cloudflare log integration → Crawl Health + Error Reconciliation reports
 - **Phase 2:** Automated Screaming Frog cloud crawls → metadata into BigQuery
 - **Phase 3:** WordPress MCP integration → automated SEO fixes
@@ -127,6 +127,16 @@ bq ls deepdyve-491623:searchconsole
    crawled-but-not-shown URL list. Google exports no daily indexed-page count,
    so "shown in search" is a floor, not true index size; true coverage needs
    the URL Inspection sampler (gsc_url_inspection, not built).
+11. URL Churn — per day and section, URLs getting their first impression ("New")
+   vs. their last ("Went quiet", 7+ days old). Derived from the GSC export; a proxy
+   for pages entering/leaving search, not confirmed index changes. (built, views
+   not yet deployed)
+12. Dropped vs Retained — URLs shown around the peak split by whether they are still
+   shown in the latest 14 days; compares their peak-time CTR/position/impressions.
+   "Dropped" = no longer shown, not confirmed de-indexed. (views deployed; dashboard tab pending merge)
+13. Crawl Waste — verified Googlebot requests by URL kind (/min bundles, static files,
+   /doc-view, double slash) and response class. Candidates need owner sign-off before
+   any robots.txt change. (views deployed; dashboard tab pending merge)
 
 ## Update Workflow
 

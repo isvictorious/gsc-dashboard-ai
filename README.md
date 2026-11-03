@@ -3,7 +3,7 @@
 SQL queries, BigQuery views, and a Streamlit dashboard for actionable SEO
 intelligence from Google Search Console data.
 
-**Status: 10 of 10 reports live with real data.** Quick Wins, Content Gaps,
+**Status: 10 of 13 reports live with real data; reports 11-13 have deployed views and await dashboard merge.** Quick Wins, Content Gaps,
 CTR Optimization, Cannibalization, Brand vs Non-Brand, and Page Performance
 read Google Search Console data; Crawl Health and Error Reconciliation read
 Cloudflare logs streaming into BigQuery (Phase 1.5, live since 2026-10-07).
@@ -81,6 +81,9 @@ A keyword with 10,000 impressions and 0 clicks at position 45 is not an opportun
 | 8 | Error Reconciliation | Which layer (Cloudflare edge or origin) is producing Googlebot's errors? | ✅ Live (edge vs origin; GSC comparison pending) |
 | 9 | Article Visibility | Are our articles (`/lp/`) actually ranking for relevant queries? | ✅ Live (best-effort noise filter until Phase 2 titles) |
 | 10 | Crawl & Index Coverage | How many URLs does Googlebot crawl each day vs. how many show up in search? | ✅ Live (shown-in-search is a floor, not true index size) |
+| 11 | URL Churn | Which pages started or stopped showing in search each day, by section? | 🟡 Views deployed; dashboard tab pending merge |
+| 12 | Dropped vs Retained | Did the pages that vanished from search differ from those that stayed? | 🟡 Views deployed; dashboard tab pending merge |
+| 13 | Crawl Waste | Where does Googlebot spend requests, and how much goes to assets, bundles and redirects? | 🟡 Views deployed; dashboard tab pending merge |
 
 **Content Gaps note:** this report currently returns 0 rows, which is
 expected, not broken. DeepDyve is a journal-catalog site with minimal
