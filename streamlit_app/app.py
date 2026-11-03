@@ -1661,26 +1661,38 @@ def coming_soon_tab(name: str, note: str = ""):
     )
 
 
-tabs = st.tabs(REPORTS)
+REPORT_FUNCS = [
+    quick_wins_tab,
+    content_gaps_tab,
+    ctr_optimization_tab,
+    cannibalization_tab,
+    brand_vs_nonbrand_tab,
+    page_performance_tab,
+    crawl_health_tab,
+    error_reconciliation_tab,
+    article_visibility_tab,
+    crawl_index_coverage_tab,
+]
 
-with tabs[0]:
-    quick_wins_tab()
+# A dropdown instead of st.tabs: the tab strip needs horizontal swiping to reach the
+# later reports, which doesn't work reliably on trackpads/touch. Only the chosen
+# report runs, so the page also loads one report's queries instead of all of them.
+# The choice lives in the URL (?report=7) so refresh and shared links keep it.
+def _selected_report() -> int:
+    try:
+        idx = int(st.query_params.get("report", 1)) - 1
+    except (TypeError, ValueError):
+        idx = 0
+    return idx if 0 <= idx < len(REPORTS) else 0
 
-with tabs[1]:
-    content_gaps_tab()
-with tabs[2]:
-    ctr_optimization_tab()
-with tabs[3]:
-    cannibalization_tab()
-with tabs[4]:
-    brand_vs_nonbrand_tab()
-with tabs[5]:
-    page_performance_tab()
-with tabs[6]:
-    crawl_health_tab()
-with tabs[7]:
-    error_reconciliation_tab()
-with tabs[8]:
-    article_visibility_tab()
-with tabs[9]:
-    crawl_index_coverage_tab()
+
+def _on_report_change() -> None:
+    st.query_params["report"] = str(REPORTS.index(st.session_state["report_choice"]) + 1)
+
+
+if "report_choice" not in st.session_state:
+    st.session_state["report_choice"] = REPORTS[_selected_report()]
+
+st.selectbox("Report", REPORTS, key="report_choice", on_change=_on_report_change)
+
+REPORT_FUNCS[REPORTS.index(st.session_state["report_choice"])]()
