@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 SEO intelligence pipeline with 4 phases:
-- **Phase 1:** BigQuery SQL queries + views → Streamlit dashboard (9 reports, see below)
+- **Phase 1:** BigQuery SQL queries + views → Streamlit dashboard (10 reports, see below)
 - **Phase 1.5:** Cloudflare log integration → Crawl Health + Error Reconciliation reports
 - **Phase 2:** Automated Screaming Frog cloud crawls → metadata into BigQuery
 - **Phase 3:** WordPress MCP integration → automated SEO fixes
@@ -109,20 +109,6 @@ bq ls deepdyve-491623:searchconsole
 - **Date handling:** Include `data_date` in all views; let Looker handle date filtering
 - **Metadata joins:** Always use LEFT JOIN for `page_metadata` table (may not exist yet)
 - **Comments:** All queries include clear SQL comments for learning
-
-## Architecture
-
-```
-GSC → BigQuery (daily export)
-                    ↓
-     BigQuery Views → Streamlit dashboard (Phase 1: 8 reports)
-                    ↓
-Cloudflare Logpush → BigQuery (Phase 1.5: crawl + error reports)
-                    ↓
-Screaming Frog → Cloud VM → BigQuery (Phase 2: page metadata)
-                    ↓
-WordPress MCP → automated fixes (Phase 3)
-```
 
 ## The Reports
 
