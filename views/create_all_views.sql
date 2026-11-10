@@ -803,3 +803,54 @@ FROM (
     WHERE is_verified_googlebot
 )
 GROUP BY data_date, url_pattern, status_class, has_query;
+
+-- ============================================================================
+-- View 14: URL retention curve (the "normal turnover" baseline for report 12)
+-- Splits the GSC export into consecutive 14-day windows starting at the first
+-- export day. For each window (the cohort) it reports what share of its URLs
+-- were shown again in each LATER window, by gap in days. Only fully-complete
+-- windows count. Compare cohorts at the SAME gap: if URLs from an early cohort
+-- also lost ~90% over 140 days, a ~90% "dropped" share for the peak cohort is
+-- mostly normal turnover, not an indexing event. Shown in search is not the
+-- same as indexed, so this is a proxy for visibility, not index status.
+-- ============================================================================
+CREATE OR REPLACE VIEW `deepdyve-491623.searchconsole.v_url_retention_curve` AS
+WITH bounds AS (
+    SELECT MIN(data_date) AS export_start, MAX(data_date) AS export_end
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression`
+),
+url_windows AS (
+    SELECT DISTINCT
+        t.url,
+        DIV(DATE_DIFF(t.data_date, b.export_start, DAY), 14) AS w
+    FROM `deepdyve-491623.searchconsole.searchdata_url_impression` t
+    CROSS JOIN bounds b
+),
+complete_windows AS (
+    SELECT w FROM UNNEST(GENERATE_ARRAY(0, 40)) AS w
+    CROSS JOIN bounds b
+    WHERE DATE_ADD(b.export_start, INTERVAL (w + 1) * 14 - 1 DAY) <= b.export_end
+),
+cohort_sizes AS (
+    SELECT a.w AS cohort_w, COUNT(*) AS cohort_urls
+    FROM url_windows a JOIN complete_windows c ON a.w = c.w
+    GROUP BY a.w
+),
+still AS (
+    SELECT a.w AS cohort_w, b.w AS later_w, COUNT(*) AS still_shown
+    FROM url_windows a
+    JOIN url_windows b ON a.url = b.url AND b.w > a.w
+    JOIN complete_windows ca ON a.w = ca.w
+    JOIN complete_windows cb ON b.w = cb.w
+    GROUP BY a.w, b.w
+)
+SELECT
+    DATE_ADD(bd.export_start, INTERVAL s.cohort_w * 14 DAY) AS cohort_start,
+    (s.later_w - s.cohort_w) * 14 AS gap_days,
+    z.cohort_urls,
+    s.still_shown,
+    SAFE_DIVIDE(s.still_shown, z.cohort_urls) AS share_still_shown
+FROM still s
+JOIN cohort_sizes z ON s.cohort_w = z.cohort_w
+CROSS JOIN bounds bd
+;
