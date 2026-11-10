@@ -1743,6 +1743,47 @@ def load_dropped_vs_retained() -> pd.DataFrame:
     ).to_dataframe()
 
 
+@st.cache_data(ttl=86400)  # 24h - scans the whole GSC export once
+def load_url_retention() -> pd.DataFrame:
+    client = get_bq_client()
+    return client.query(
+        f"SELECT * FROM `{PROJECT}.{DATASET}.v_url_retention_curve` ORDER BY cohort_start, gap_days"
+    ).to_dataframe()
+
+
+def _normal_turnover_section(peak_start, peak_end) -> None:
+    """Retention of every 14-day cohort at the same gaps, so the peak cohort has a baseline."""
+    ret = load_url_retention()
+    if ret.empty:
+        return
+    gaps = [14, 56, 98, 140]
+    ret = ret.assign(cohort_start=pd.to_datetime(ret["cohort_start"]))
+    peak_end_ts = pd.to_datetime(peak_end)
+    rows = []
+    for start, grp in ret.groupby("cohort_start"):
+        by_gap = grp.set_index("gap_days")["share_still_shown"]
+        in_peak = start <= peak_end_ts <= start + pd.Timedelta(days=13)
+        rows.append([
+            f"{start.date()} to {(start + pd.Timedelta(days=13)).date()}" + ("  (peak)" if in_peak else ""),
+            f"{int(grp['cohort_urls'].iloc[0]):,}",
+            *["–" if g not in by_gap.index else f"{100 * by_gap[g]:.0f}%" for g in gaps],
+        ])
+    st.markdown(
+        '<div class="action-box"><div class="label">Is this normal turnover?</div>'
+        "<p>Each row is a 14-day group of URLs; the columns show what share of them were shown again that many days later. "
+        "Compare rows at the <b>same</b> gap: if early groups also lost most of their URLs, a large dropped share for the peak group is mostly "
+        "ordinary turnover. A drop in the later rows, compared with the earlier ones at the same gap, is the part that points to something changing. "
+        'A dash means that much time has not passed yet. "Shown again" is not the same as indexed.</p></div>',
+        unsafe_allow_html=True,
+    )
+    simple_table(
+        "Share of Each Group Still Shown, by Days Later",
+        ["14-day group", "URLs", "After 14 days", "After 56 days", "After 98 days", "After 140 days"],
+        rows,
+    )
+    csv_download(ret, "url_retention_curve.csv", "Download retention data (CSV)", "dl_retention")
+
+
 def _cohort_summary(df: pd.DataFrame) -> pd.DataFrame:
     """Collapse cohort rows to one line per group; position is re-weighted by impressions."""
     g = df.assign(pos_x_imp=df["avg_position"] * df["impressions"])
@@ -1791,6 +1832,8 @@ def dropped_vs_retained_tab():
              "n/a" if pd.isna(r["avg_position"]) else f"{r['avg_position']:.1f}"]
             for _, r in frame.iterrows()
         ]
+
+    _normal_turnover_section(w["base_start"], w["base_end"])
 
     headers = ["Group", "Cohort", "URLs", "Impressions", "Clicks", "CTR", "Avg position"]
     simple_table("Overall (at peak)", headers, fmt_rows(overall.reset_index().assign(group="All URLs"), "group"))
@@ -1920,4 +1963,11 @@ if "report_choice" not in st.session_state:
 
 st.selectbox("Report", REPORTS, key="report_choice", on_change=_on_report_change)
 
-REPORT_FUNCS[REPORTS.index(st.session_state["report_choice"])]()
+# Streamlit keeps the previous report on screen, dimmed, while a new one's queries run,
+# which reads as "the dropdown did nothing" on a cold cache. Clear the area first and
+# show a loading message so a switch is visibly working.
+_slot = st.empty()
+_slot.empty()
+with _slot.container():
+    with st.spinner(f"Loading {st.session_state['report_choice']}. The first load can take up to 30 seconds."):
+        REPORT_FUNCS[REPORTS.index(st.session_state["report_choice"])]()
